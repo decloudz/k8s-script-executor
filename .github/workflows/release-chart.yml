@@ -43,9 +43,15 @@ jobs:
         with:
           version: v3.12.0
 
-      - name: Package Helm Chart
+      - name: Verify Chart Directory
         run: |
-          cd deploy/chart
+          pwd
+          ls -la deploy/chart/
+          cat deploy/chart/Chart.yaml
+
+      - name: Package Helm Chart
+        working-directory: deploy/chart
+        run: |
           helm dependency update
           helm package .
 
