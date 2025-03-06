@@ -38,16 +38,23 @@ jobs:
           # Update appVersion
           sed -i "s/^appVersion: .*$/appVersion: ${VERSION#v}/" Chart.yaml
 
+      - name: Package Helm Chart
+        run: |
+          cd deploy/chart
+          helm package .
+
       - name: Run chart-releaser
         uses: helm/chart-releaser-action@v1.6.0
         env:
           CR_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
         with:
-          charts_dir: deploy/chart
-          config: deploy/chart/.helmignore
-          skip_packaging: false
+          config: deploy/chart/cr.yaml
+          skip_packaging: true
           skip_existing: false
           mark_as_latest: true
           packages_with_index: true
           pages_branch: gh-pages
+          push: true
+          release_name_template: "{{ .Name }}-{{ .Version }}"
+          release_notes_file: deploy/chart/CHANGELOG.md
  
