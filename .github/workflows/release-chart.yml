@@ -38,21 +38,7 @@ jobs:
         with:
           version: v3.12.0
 
-      - name: Debug Chart Directory
-        run: |
-          echo "Current directory: $(pwd)"
-          echo "Repository structure:"
-          find . -type f -name "Chart.yaml" -o -name "*.yaml" | grep -v '.github'
-          echo "Checking Chart.yaml file status:"
-          if [ -f deploy/chart/Chart.yaml ]; then
-            echo "Chart.yaml exists in deploy/chart/"
-            stat deploy/chart/Chart.yaml
-            cat deploy/chart/Chart.yaml
-          else
-            echo "Chart.yaml does NOT exist in deploy/chart/"
-          fi
-
-      - name: Package with Absolute Path
+      - name: Prepare Working Directory
         run: |
           # Extract version from the first tag (assuming it's the semantic version)
           VERSION=$(echo "${{ steps.get_tag.outputs.image_tag }}" | tr -d '[]' | cut -d',' -f1 | tr -d '"')
@@ -61,24 +47,49 @@ jobs:
             VERSION="1.0.0"
           fi
           
-          # Only update version if Chart.yaml exists
-          if [ -f deploy/chart/Chart.yaml ]; then
-            echo "Updating version in existing Chart.yaml"
-            sed -i "s/^version:.*$/version: ${VERSION#v}/" deploy/chart/Chart.yaml
-            sed -i "s/^appVersion:.*$/appVersion: ${VERSION#v}/" deploy/chart/Chart.yaml
+          # Create a fresh working directory
+          WORKING_DIR="/tmp/helm-chart-work"
+          mkdir -p "${WORKING_DIR}"
+          
+          # Copy all chart files to working directory
+          echo "Copying chart files to ${WORKING_DIR}"
+          cp -r deploy/chart/* "${WORKING_DIR}/"
+          cp -r deploy/chart/.helmignore "${WORKING_DIR}/" || true
+          
+          # Ensure Chart.yaml has the correct format and content
+          echo "apiVersion: v2" > "${WORKING_DIR}/Chart.yaml"
+          echo "name: k8s-script-executor" >> "${WORKING_DIR}/Chart.yaml"
+          echo "description: A Helm chart for Kubernetes Script Executor" >> "${WORKING_DIR}/Chart.yaml"
+          echo "type: application" >> "${WORKING_DIR}/Chart.yaml"
+          echo "version: ${VERSION#v}" >> "${WORKING_DIR}/Chart.yaml"
+          echo "appVersion: ${VERSION#v}" >> "${WORKING_DIR}/Chart.yaml"
+          
+          # Print debug information
+          echo "Working directory contents:"
+          ls -la "${WORKING_DIR}"
+          echo "Chart.yaml contents:"
+          cat "${WORKING_DIR}/Chart.yaml"
+          
+          # Create packages directory
+          mkdir -p /tmp/helm-packages
+
+      - name: Package Chart
+        run: |
+          WORKING_DIR="/tmp/helm-chart-work"
+          
+          # Verify Chart.yaml exists before packaging
+          if [ ! -f "${WORKING_DIR}/Chart.yaml" ]; then
+            echo "ERROR: Chart.yaml still missing in working directory!"
+            exit 1
           fi
           
-          # Use absolute paths for Helm commands
-          CHART_PATH="$(pwd)/deploy/chart"
-          echo "Using absolute chart path: ${CHART_PATH}"
-          echo "Chart directory contents:"
-          ls -la "${CHART_PATH}"
+          # Package the chart
+          echo "Packaging chart from ${WORKING_DIR}"
+          helm package "${WORKING_DIR}" --destination /tmp/helm-packages
           
-          # Create temp packaging directory
-          mkdir -p /tmp/helm-packages
-          
-          # Package using absolute path
-          helm package "${CHART_PATH}" --destination /tmp/helm-packages
+          # List packages
+          echo "Generated packages:"
+          ls -la /tmp/helm-packages
 
       - name: Run chart-releaser
         uses: helm/chart-releaser-action@v1.6.0
