@@ -38,7 +38,7 @@ jobs:
         with:
           version: v3.12.0
 
-      - name: Fix Chart.yaml and Package
+      - name: Create temporary chart directory
         run: |
           # Extract version from tag
           VERSION=$(echo "${{ steps.get_tag.outputs.image_tag }}" | tr -d '[]' | cut -d',' -f1 | tr -d '"')
@@ -46,34 +46,51 @@ jobs:
             VERSION="1.0.0"
           fi
           
-          # Ensure correct line endings
-          cd deploy/chart
-          dos2unix Chart.yaml || true
+          # Create a temporary directory for packaging
+          TEMP_DIR=$(mktemp -d)
+          echo "TEMP_DIR=${TEMP_DIR}" >> $GITHUB_ENV
           
-          # Check file permissions
-          chmod 644 Chart.yaml
+          # Copy all chart files except Chart.yaml
+          cp -r deploy/chart/* "${TEMP_DIR}/"
+          cp -r deploy/chart/.helmignore "${TEMP_DIR}/" || true
           
-          # Fix Chart.yaml with minimal changes
-          awk 'NR==1{print "apiVersion: v2"}
-               NR==2{print "name: k8s-script-executor"}
-               NR==3{print "description: A Helm chart for Kubernetes Script Executor"}
-               NR==4{print "type: application"}
-               NR==5{print "version: '${VERSION#v}'"}
-               NR==6{print "appVersion: '${VERSION#v}'"}
-               NR>6' Chart.yaml > Chart.yaml.new
-          mv Chart.yaml.new Chart.yaml
+          # Create a fresh Chart.yaml
+          echo "apiVersion: v2" > "${TEMP_DIR}/Chart.yaml"
+          echo "name: k8s-script-executor" >> "${TEMP_DIR}/Chart.yaml"
+          echo "description: A Helm chart for Kubernetes Script Executor" >> "${TEMP_DIR}/Chart.yaml"
+          echo "type: application" >> "${TEMP_DIR}/Chart.yaml"
+          echo "version: ${VERSION#v}" >> "${TEMP_DIR}/Chart.yaml"
+          echo "appVersion: ${VERSION#v}" >> "${TEMP_DIR}/Chart.yaml"
+          echo "maintainers:" >> "${TEMP_DIR}/Chart.yaml"
+          echo "  - name: \"Ade Adegboye\"" >> "${TEMP_DIR}/Chart.yaml"
+          echo "    email: \"alveocloudevops@gmail.com\"" >> "${TEMP_DIR}/Chart.yaml"
+          echo "keywords:" >> "${TEMP_DIR}/Chart.yaml"
+          echo "  - kubernetes" >> "${TEMP_DIR}/Chart.yaml"
+          echo "  - script-executor" >> "${TEMP_DIR}/Chart.yaml"
+          echo "  - automation" >> "${TEMP_DIR}/Chart.yaml"
+          echo "home: \"https://github.com/alvdevcl/k8s-script-executor\"" >> "${TEMP_DIR}/Chart.yaml"
+          echo "sources:" >> "${TEMP_DIR}/Chart.yaml"
+          echo "  - \"https://github.com/alvdevcl/k8s-script-executor\"" >> "${TEMP_DIR}/Chart.yaml"
           
-          # Debug
+          # Verify contents
+          echo "Temporary chart directory:"
+          ls -la "${TEMP_DIR}"
           echo "Chart.yaml contents:"
-          cat Chart.yaml
-          
-          # Package Chart
-          helm lint .
-          helm dependency update || true
+          cat "${TEMP_DIR}/Chart.yaml"
+
+      - name: Package Chart
+        run: |
+          # Package the chart from temp directory
+          cd "${TEMP_DIR}"
           mkdir -p /tmp/helm-packages
+          
+          # Validate chart
+          echo "Running helm lint..."
+          helm lint .
+          
+          echo "Creating package..."
           helm package . --destination /tmp/helm-packages
           
-          # List packages
           echo "Generated packages:"
           ls -la /tmp/helm-packages
 
