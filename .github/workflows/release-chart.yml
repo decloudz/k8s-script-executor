@@ -1,0 +1,82 @@
+name: Release Helm Chart
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config user.name "$GITHUB_ACTOR"
+          git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
+
+      - name: Run chart-releaser
+        uses: helm/chart-releaser-action@v1.6.0
+        env:
+          CR_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+        with:
+          charts_dir: deploy/chart
+          config: deploy/chart/.helmignore
+          skip_packaging: false
+          skip_upload: false
+          skip_commit: false
+          skip_create_release: false
+          skip_update_index: false
+          skip_update_chart_version: false
+          skip_git_tag: false
+          skip_cleanup: false
+          skip_helm_dependency_update: false
+          skip_helm_lint: false
+          skip_helm_test: false
+          skip_helm_package: false
+          skip_helm_index: false
+          skip_helm_push: false
+          skip_helm_release: false
+          skip_helm_sign: false
+          skip_helm_verify: false
+          skip_helm_verify_signature: false
+          skip_helm_verify_checksum: false
+          skip_helm_verify_checksum_signature: false
+          skip_helm_verify_checksum_signature_verify: false
+          skip_helm_verify_checksum_signature_verify_checksum: false
+          skip_helm_verify_checksum_signature_verify_checksum_signature: false
+          skip_helm_verify_checksum_signature_verify_checksum_signature_verify: false
+          skip_helm_verify_checksum_signature_verify_checksum_signature_verify_checksum: false
+          skip_helm_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature: false
+          skip_helm_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify: false
+          skip_helm_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum: false
+          skip_helm_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature: false
+          skip_helm_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify: false
+          skip_helm_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum: false
+          skip_helm_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature: false
+          skip_helm_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify: false
+          skip_helm_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum: false
+          skip_helm_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature: false
+          skip_helm_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify: false
+          skip_helm_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum: false
+          skip_helm_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature: false
+          skip_helm_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify: false
+          skip_helm_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum: false
+          skip_helm_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature: false
+          skip_helm_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify: false
+          skip_helm_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum: false
+          skip_helm_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature: false
+          skip_helm_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify: false
+          skip_helm_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum: false
+          skip_helm_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature: false
+          skip_helm_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify: false
+          skip_helm_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify: false
+          skip_helm_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature: false
+          skip_helm_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature_verify_checksum_signature: false
+ 

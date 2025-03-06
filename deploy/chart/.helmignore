@@ -1,0 +1,41 @@
+# Patterns to ignore when building packages.
+# This supports shell glob matching, relative path matching, and
+# negation (prefixed with !). Only one pattern per line.
+.DS_Store
+*.tgz
+
+# Git files
+.git
+.gitignore
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Build files
+*.o
+*.exe
+*.out
+*.app
+
+# Test files
+*.test
+*.tmp
+
+# Documentation
+docs/
+*.md
+!README.md
+
+# CI/CD files
+.github/
+.gitlab/
+.circleci/
+.travis.yml
+
+# Local development files
+.env
+.env.*
+*.log 
