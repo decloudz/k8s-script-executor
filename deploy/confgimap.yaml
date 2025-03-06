@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: exec-operator-config
+  namespace: ac-prime-service-dev
+data:
+  scripts.json: |
+    [
+      {
+        "name": "where am i",
+        "command": "pwd"
+      },
+      {
+        "name": "list home directory",
+        "command": "ls -al /home"
+      },
+      {
+        "name": "Nightly C0 Data Restore",
+        "command": "/home/acdba/QA-Scripts/run_Nightly_Data_Restore.sh"
+      }
+    ]
