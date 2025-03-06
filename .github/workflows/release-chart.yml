@@ -38,7 +38,21 @@ jobs:
         with:
           version: v3.12.0
 
-      - name: Update Chart Version
+      - name: Debug Chart Directory
+        run: |
+          echo "Current directory: $(pwd)"
+          echo "Repository structure:"
+          find . -type f -name "Chart.yaml" -o -name "*.yaml" | grep -v '.github'
+          echo "Checking Chart.yaml file status:"
+          if [ -f deploy/chart/Chart.yaml ]; then
+            echo "Chart.yaml exists in deploy/chart/"
+            stat deploy/chart/Chart.yaml
+            cat deploy/chart/Chart.yaml
+          else
+            echo "Chart.yaml does NOT exist in deploy/chart/"
+          fi
+
+      - name: Package with Absolute Path
         run: |
           # Extract version from the first tag (assuming it's the semantic version)
           VERSION=$(echo "${{ steps.get_tag.outputs.image_tag }}" | tr -d '[]' | cut -d',' -f1 | tr -d '"')
@@ -47,27 +61,24 @@ jobs:
             VERSION="1.0.0"
           fi
           
-          # Update version in existing Chart.yaml
+          # Only update version if Chart.yaml exists
           if [ -f deploy/chart/Chart.yaml ]; then
+            echo "Updating version in existing Chart.yaml"
             sed -i "s/^version:.*$/version: ${VERSION#v}/" deploy/chart/Chart.yaml
             sed -i "s/^appVersion:.*$/appVersion: ${VERSION#v}/" deploy/chart/Chart.yaml
-          else
-            echo "Chart.yaml not found. Please ensure it exists in the repository."
-            exit 1
           fi
-
-      - name: Verify Chart Directory
-        run: |
-          ls -la deploy/chart/
-          cat deploy/chart/Chart.yaml
-
-      - name: Package Helm Chart
-        run: |
-          cd deploy/chart
-          helm dependency build || true
-          helm package .
+          
+          # Use absolute paths for Helm commands
+          CHART_PATH="$(pwd)/deploy/chart"
+          echo "Using absolute chart path: ${CHART_PATH}"
+          echo "Chart directory contents:"
+          ls -la "${CHART_PATH}"
+          
+          # Create temp packaging directory
           mkdir -p /tmp/helm-packages
-          mv *.tgz /tmp/helm-packages/
+          
+          # Package using absolute path
+          helm package "${CHART_PATH}" --destination /tmp/helm-packages
 
       - name: Run chart-releaser
         uses: helm/chart-releaser-action@v1.6.0

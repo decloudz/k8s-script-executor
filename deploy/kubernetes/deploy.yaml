@@ -2,7 +2,6 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: exec-api
-  namespace: ac-prime-service-dev
 spec:
   replicas: 1
   selector:
@@ -15,7 +14,7 @@ spec:
     spec:
       containers:
       - name: api-server
-        image: your-docker-repo/exec-api:latest
+        image: ghcr.io/alvdevcl/k8s-script-executor:latest
         ports:
         - containerPort: 8080
         env:
