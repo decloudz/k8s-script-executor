@@ -17,6 +17,8 @@ jobs:
     permissions:
       contents: write
       packages: write
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tags }}
 
     steps:
       - name: Checkout repository

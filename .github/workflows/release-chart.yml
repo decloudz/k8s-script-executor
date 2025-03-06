@@ -1,15 +1,17 @@
 name: Release Helm Chart
 
 on:
-  push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
-  workflow_dispatch:
+  workflow_run:
+    workflows: ["Build and Push Docker Image"]
+    types:
+      - completed
+    branches:
+      - main
 
 jobs:
   release:
     runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -21,6 +23,21 @@ jobs:
           git config user.name "$GITHUB_ACTOR"
           git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
 
+      - name: Get Docker image tag
+        id: get_tag
+        run: |
+          echo "image_tag=${{ github.event.workflow_run.outputs.image_tag }}" >> $GITHUB_OUTPUT
+
+      - name: Update Chart version
+        run: |
+          cd deploy/chart
+          # Extract version from the first tag (assuming it's the semantic version)
+          VERSION=$(echo "${{ steps.get_tag.outputs.image_tag }}" | tr -d '[]' | cut -d',' -f1 | tr -d '"')
+          # Update Chart.yaml version
+          sed -i "s/^version: .*$/version: ${VERSION#v}/" Chart.yaml
+          # Update appVersion
+          sed -i "s/^appVersion: .*$/appVersion: ${VERSION#v}/" Chart.yaml
+
       - name: Run chart-releaser
         uses: helm/chart-releaser-action@v1.6.0
         env:
@@ -29,20 +46,8 @@ jobs:
           charts_dir: deploy/chart
           config: deploy/chart/.helmignore
           skip_packaging: false
-          skip_upload: false
-          skip_commit: false
-          skip_create_release: false
-          skip_update_index: false
-          skip_update_chart_version: false
-          skip_git_tag: false
-          skip_cleanup: false
-          skip_helm_dependency_update: false
-          skip_helm_lint: false
-          skip_helm_test: false
-          skip_helm_package: false
-          skip_helm_index: false
-          skip_helm_push: false
-          skip_helm_release: false
-          skip_helm_sign: false
-          skip_helm_verify: false
+          skip_existing: false
+          mark_as_latest: true
+          packages_with_index: true
+          pages_branch: gh-pages
  
