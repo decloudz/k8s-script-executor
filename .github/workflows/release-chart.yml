@@ -28,9 +28,23 @@ jobs:
         run: |
           echo "image_tag=${{ github.event.workflow_run.outputs.image_tag }}" >> $GITHUB_OUTPUT
 
-      - name: Update Chart version
+      - name: Install Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: v3.12.0
+
+      - name: Create Chart Directory Structure
         run: |
-          cd deploy/chart
+          mkdir -p /tmp/helm-chart/templates
+          cp -r deploy/chart/templates/* /tmp/helm-chart/templates/
+          cp deploy/chart/values.yaml /tmp/helm-chart/
+          cp deploy/chart/.helmignore /tmp/helm-chart/
+          cp deploy/chart/CHANGELOG.md /tmp/helm-chart/
+          cp deploy/chart/cr.yaml /tmp/helm-chart/
+
+      - name: Create Chart.yaml
+        working-directory: /tmp/helm-chart
+        run: |
           # Extract version from the first tag (assuming it's the semantic version)
           VERSION=$(echo "${{ steps.get_tag.outputs.image_tag }}" | tr -d '[]' | cut -d',' -f1 | tr -d '"')
           # If VERSION is empty, set a default version
@@ -55,35 +69,26 @@ jobs:
           echo "sources:" >> Chart.yaml
           echo "  - \"https://github.com/alvdevcl/k8s-script-executor\"" >> Chart.yaml
 
-      - name: Install Helm
-        uses: azure/setup-helm@v3
-        with:
-          version: v3.12.0
-
       - name: Verify Chart Directory
         run: |
-          pwd
-          ls -la deploy/chart/
-          cat deploy/chart/Chart.yaml
+          ls -la /tmp/helm-chart/
+          cat /tmp/helm-chart/Chart.yaml
 
       - name: Package Helm Chart
-        working-directory: deploy/chart
+        working-directory: /tmp/helm-chart
         run: |
           helm dependency update
           helm package .
+          mkdir -p /tmp/helm-packages
+          mv *.tgz /tmp/helm-packages/
 
       - name: Run chart-releaser
         uses: helm/chart-releaser-action@v1.6.0
         env:
           CR_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+          CR_PACKAGE_PATH: /tmp/helm-packages
+          CR_SKIP_EXISTING: "false"
         with:
-          config: deploy/chart/cr.yaml
+          charts_dir: /tmp/helm-chart
           skip_packaging: true
-          skip_existing: false
-          mark_as_latest: true
-          packages_with_index: true
-          pages_branch: gh-pages
-          push: true
-          release_name_template: "{{ .Name }}-{{ .Version }}"
-          release_notes_file: deploy/chart/CHANGELOG.md
  
