@@ -38,9 +38,15 @@ jobs:
           # Update appVersion
           sed -i "s/^appVersion: .*$/appVersion: ${VERSION#v}/" Chart.yaml
 
+      - name: Install Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: v3.12.0
+
       - name: Package Helm Chart
         run: |
           cd deploy/chart
+          helm dependency update
           helm package .
 
       - name: Run chart-releaser
