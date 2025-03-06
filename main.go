@@ -19,41 +19,66 @@ type Script struct {
 	Command string `json:"command"`
 }
 
+// Config holds application configuration
+type Config struct {
+	ScriptsPath      string
+	PodLabelSelector string
+	Namespace        string
+}
+
+// Load configuration from environment variables with fallbacks
+func loadConfig() *Config {
+	return &Config{
+		ScriptsPath:      getEnvOrDefault("SCRIPTS_PATH", "/scripts/scripts.json"),
+		PodLabelSelector: getEnvOrDefault("POD_LABEL_SELECTOR", "app=query-server"),
+		Namespace:        getEnvOrDefault("NAMESPACE", "default"),
+	}
+}
+
+// Get environment variable with fallback
+func getEnvOrDefault(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
+}
+
 // Load scripts from JSON file
 func loadScripts(filePath string) ([]Script, error) {
 	file, err := ioutil.ReadFile(filePath)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to read scripts file: %v", err)
 	}
 
 	var scripts []Script
 	err = json.Unmarshal(file, &scripts)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to parse scripts JSON: %v", err)
 	}
 
 	return scripts, nil
 }
 
-// Get the first pod running query-server
-func getTargetPod(namespace string) (string, error) {
-	cmd := exec.Command("sh", "-c", fmt.Sprintf("kubectl get pods -n %s -l app=query-server -o jsonpath='{.items[0].metadata.name}'", namespace))
+// Get the first pod matching the label selector
+func getTargetPod(namespace, labelSelector string) (string, error) {
+	cmd := exec.Command("sh", "-c", fmt.Sprintf("kubectl get pods -n %s -l %s -o jsonpath='{.items[0].metadata.name}'", namespace, labelSelector))
 	out, err := cmd.Output()
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to get pod: %v", err)
 	}
 	podName := strings.TrimSpace(string(out))
 	if podName == "" {
-		return "", fmt.Errorf("no target pod found")
+		return "", fmt.Errorf("no pod found matching label selector: %s", labelSelector)
 	}
 	return podName, nil
 }
 
 // List scripts from scripts.json
 func listScripts(c *gin.Context) {
-	scripts, err := loadScripts("/scripts/scripts.json")
+	config := loadConfig()
+	scripts, err := loadScripts(config.ScriptsPath)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load scripts"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, scripts)
@@ -61,6 +86,8 @@ func listScripts(c *gin.Context) {
 
 // Execute a script inside the target pod
 func executeScript(c *gin.Context) {
+	config := loadConfig()
+
 	var request struct {
 		ScriptName string `json:"script_name"`
 	}
@@ -71,9 +98,9 @@ func executeScript(c *gin.Context) {
 	}
 
 	// Load scripts
-	scripts, err := loadScripts("/scripts/scripts.json")
+	scripts, err := loadScripts(config.ScriptsPath)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load scripts"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -92,15 +119,14 @@ func executeScript(c *gin.Context) {
 	}
 
 	// Get the target pod
-	namespace := os.Getenv("NAMESPACE")
-	targetPod, err := getTargetPod(namespace)
+	targetPod, err := getTargetPod(config.Namespace, config.PodLabelSelector)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
 	// Execute the script in the target pod
-	execCmd := fmt.Sprintf("kubectl exec -n %s %s -- /bin/bash -c '%s'", namespace, targetPod, selectedScript.Command)
+	execCmd := fmt.Sprintf("kubectl exec -n %s %s -- /bin/bash -c '%s'", config.Namespace, targetPod, selectedScript.Command)
 	cmd := exec.Command("sh", "-c", execCmd)
 
 	output, err := cmd.CombinedOutput()
@@ -120,6 +146,12 @@ func executeScript(c *gin.Context) {
 }
 
 func main() {
+	config := loadConfig()
+	log.Printf("Starting server with configuration:")
+	log.Printf("- Scripts path: %s", config.ScriptsPath)
+	log.Printf("- Pod label selector: %s", config.PodLabelSelector)
+	log.Printf("- Namespace: %s", config.Namespace)
+
 	r := gin.Default()
 
 	// Define API routes
