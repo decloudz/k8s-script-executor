@@ -33,10 +33,27 @@ jobs:
           cd deploy/chart
           # Extract version from the first tag (assuming it's the semantic version)
           VERSION=$(echo "${{ steps.get_tag.outputs.image_tag }}" | tr -d '[]' | cut -d',' -f1 | tr -d '"')
-          # Update Chart.yaml version
-          sed -i "s/^version: .*$/version: ${VERSION#v}/" Chart.yaml
-          # Update appVersion
-          sed -i "s/^appVersion: .*$/appVersion: ${VERSION#v}/" Chart.yaml
+          # Create a temporary file with the updated version
+          cat > Chart.yaml.tmp << EOF
+          apiVersion: v2
+          name: k8s-script-executor
+          description: A Helm chart for Kubernetes Script Executor
+          type: application
+          version: ${VERSION#v}
+          appVersion: ${VERSION#v}
+          maintainers:
+            - name: "Ade Adegboye"
+              email: "alveocloudevops@gmail.com"
+          keywords:
+            - kubernetes
+            - script-executor
+            - automation
+          home: "https://github.com/alvdevcl/k8s-script-executor"
+          sources:
+            - "https://github.com/alvdevcl/k8s-script-executor"
+          EOF
+          # Replace the original Chart.yaml with the updated one
+          mv Chart.yaml.tmp Chart.yaml
 
       - name: Install Helm
         uses: azure/setup-helm@v3
