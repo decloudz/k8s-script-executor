@@ -7,11 +7,12 @@ on:
       - completed
     branches:
       - main
+  workflow_dispatch:
 
 jobs:
   release:
     runs-on: ubuntu-latest
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -26,24 +27,18 @@ jobs:
       - name: Get Docker image tag
         id: get_tag
         run: |
-          echo "image_tag=${{ github.event.workflow_run.outputs.image_tag }}" >> $GITHUB_OUTPUT
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "image_tag=1.0.0" >> $GITHUB_OUTPUT
+          else
+            echo "image_tag=${{ github.event.workflow_run.outputs.image_tag }}" >> $GITHUB_OUTPUT
+          fi
 
       - name: Install Helm
         uses: azure/setup-helm@v3
         with:
           version: v3.12.0
 
-      - name: Create Chart Directory Structure
-        run: |
-          mkdir -p /tmp/helm-chart/templates
-          cp -r deploy/chart/templates/* /tmp/helm-chart/templates/
-          cp deploy/chart/values.yaml /tmp/helm-chart/
-          cp deploy/chart/.helmignore /tmp/helm-chart/
-          cp deploy/chart/CHANGELOG.md /tmp/helm-chart/
-          cp deploy/chart/cr.yaml /tmp/helm-chart/
-
-      - name: Create Chart.yaml
-        working-directory: /tmp/helm-chart
+      - name: Update Chart Version
         run: |
           # Extract version from the first tag (assuming it's the semantic version)
           VERSION=$(echo "${{ steps.get_tag.outputs.image_tag }}" | tr -d '[]' | cut -d',' -f1 | tr -d '"')
@@ -51,33 +46,35 @@ jobs:
           if [ -z "$VERSION" ]; then
             VERSION="1.0.0"
           fi
-          # Create Chart.yaml with the updated version
-          echo "apiVersion: v2" > Chart.yaml
-          echo "name: k8s-script-executor" >> Chart.yaml
-          echo "description: A Helm chart for Kubernetes Script Executor" >> Chart.yaml
-          echo "type: application" >> Chart.yaml
-          echo "version: ${VERSION#v}" >> Chart.yaml
-          echo "appVersion: ${VERSION#v}" >> Chart.yaml
-          echo "maintainers:" >> Chart.yaml
-          echo "  - name: \"Ade Adegboye\"" >> Chart.yaml
-          echo "    email: \"alveocloudevops@gmail.com\"" >> Chart.yaml
-          echo "keywords:" >> Chart.yaml
-          echo "  - kubernetes" >> Chart.yaml
-          echo "  - script-executor" >> Chart.yaml
-          echo "  - automation" >> Chart.yaml
-          echo "home: \"https://github.com/alvdevcl/k8s-script-executor\"" >> Chart.yaml
-          echo "sources:" >> Chart.yaml
-          echo "  - \"https://github.com/alvdevcl/k8s-script-executor\"" >> Chart.yaml
+          
+          # Ensure Chart.yaml exists with proper content
+          cat > deploy/chart/Chart.yaml << EOF
+apiVersion: v2
+name: k8s-script-executor
+description: A Helm chart for Kubernetes Script Executor
+type: application
+version: ${VERSION#v}
+appVersion: ${VERSION#v}
+maintainers:
+  - name: "Ade Adegboye"
+    email: "alveocloudevops@gmail.com"
+keywords:
+  - kubernetes
+  - script-executor
+  - automation
+home: "https://github.com/alvdevcl/k8s-script-executor"
+sources:
+  - "https://github.com/alvdevcl/k8s-script-executor"
+EOF
 
       - name: Verify Chart Directory
         run: |
-          ls -la /tmp/helm-chart/
-          cat /tmp/helm-chart/Chart.yaml
+          ls -la deploy/chart/
+          cat deploy/chart/Chart.yaml
 
       - name: Package Helm Chart
-        working-directory: /tmp/helm-chart
         run: |
-          helm dependency update
+          cd deploy/chart
           helm package .
           mkdir -p /tmp/helm-packages
           mv *.tgz /tmp/helm-packages/
@@ -89,6 +86,5 @@ jobs:
           CR_PACKAGE_PATH: /tmp/helm-packages
           CR_SKIP_EXISTING: "false"
         with:
-          charts_dir: /tmp/helm-chart
           skip_packaging: true
  
