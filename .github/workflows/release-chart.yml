@@ -38,54 +38,40 @@ jobs:
         with:
           version: v3.12.0
 
-      - name: Prepare Working Directory
+      - name: Fix Chart.yaml and Package
         run: |
-          # Extract version from the first tag (assuming it's the semantic version)
+          # Extract version from tag
           VERSION=$(echo "${{ steps.get_tag.outputs.image_tag }}" | tr -d '[]' | cut -d',' -f1 | tr -d '"')
-          # If VERSION is empty, set a default version
           if [ -z "$VERSION" ]; then
             VERSION="1.0.0"
           fi
           
-          # Create a fresh working directory
-          WORKING_DIR="/tmp/helm-chart-work"
-          mkdir -p "${WORKING_DIR}"
+          # Ensure correct line endings
+          cd deploy/chart
+          dos2unix Chart.yaml || true
           
-          # Copy all chart files to working directory
-          echo "Copying chart files to ${WORKING_DIR}"
-          cp -r deploy/chart/* "${WORKING_DIR}/"
-          cp -r deploy/chart/.helmignore "${WORKING_DIR}/" || true
+          # Check file permissions
+          chmod 644 Chart.yaml
           
-          # Ensure Chart.yaml has the correct format and content
-          echo "apiVersion: v2" > "${WORKING_DIR}/Chart.yaml"
-          echo "name: k8s-script-executor" >> "${WORKING_DIR}/Chart.yaml"
-          echo "description: A Helm chart for Kubernetes Script Executor" >> "${WORKING_DIR}/Chart.yaml"
-          echo "type: application" >> "${WORKING_DIR}/Chart.yaml"
-          echo "version: ${VERSION#v}" >> "${WORKING_DIR}/Chart.yaml"
-          echo "appVersion: ${VERSION#v}" >> "${WORKING_DIR}/Chart.yaml"
+          # Fix Chart.yaml with minimal changes
+          awk 'NR==1{print "apiVersion: v2"}
+               NR==2{print "name: k8s-script-executor"}
+               NR==3{print "description: A Helm chart for Kubernetes Script Executor"}
+               NR==4{print "type: application"}
+               NR==5{print "version: '${VERSION#v}'"}
+               NR==6{print "appVersion: '${VERSION#v}'"}
+               NR>6' Chart.yaml > Chart.yaml.new
+          mv Chart.yaml.new Chart.yaml
           
-          # Print debug information
-          echo "Working directory contents:"
-          ls -la "${WORKING_DIR}"
+          # Debug
           echo "Chart.yaml contents:"
-          cat "${WORKING_DIR}/Chart.yaml"
+          cat Chart.yaml
           
-          # Create packages directory
+          # Package Chart
+          helm lint .
+          helm dependency update || true
           mkdir -p /tmp/helm-packages
-
-      - name: Package Chart
-        run: |
-          WORKING_DIR="/tmp/helm-chart-work"
-          
-          # Verify Chart.yaml exists before packaging
-          if [ ! -f "${WORKING_DIR}/Chart.yaml" ]; then
-            echo "ERROR: Chart.yaml still missing in working directory!"
-            exit 1
-          fi
-          
-          # Package the chart
-          echo "Packaging chart from ${WORKING_DIR}"
-          helm package "${WORKING_DIR}" --destination /tmp/helm-packages
+          helm package . --destination /tmp/helm-packages
           
           # List packages
           echo "Generated packages:"
