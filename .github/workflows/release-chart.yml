@@ -12,6 +12,12 @@ on:
 jobs:
   release:
     runs-on: ubuntu-latest
+    # Add required permissions for chart-releaser with private repo
+    permissions:
+      contents: write    # Needed to create releases
+      pages: write       # Needed to publish to GitHub Pages
+      packages: read     # For accessing GitHub Packages
+      id-token: write    # Needed for private repositories
     if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
     steps:
       - name: Checkout
@@ -93,6 +99,12 @@ jobs:
           
           echo "Generated packages:"
           ls -la /tmp/helm-packages
+      
+      # Setup GitHub Pages for private repositories
+      - name: Setup GitHub Pages
+        id: pages
+        uses: actions/configure-pages@v4
+        if: always()
 
       - name: Run chart-releaser
         uses: helm/chart-releaser-action@v1.6.0
@@ -100,6 +112,12 @@ jobs:
           CR_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
           CR_PACKAGE_PATH: /tmp/helm-packages
           CR_SKIP_EXISTING: "false"
+          # Additional settings for private repositories
+          CR_GIT_BASE_URL: "https://api.github.com/"
+          CR_GIT_UPLOAD_URL: "https://uploads.github.com/"
+          CR_OWNER: "${{ github.repository_owner }}"
+          CR_GIT_REPO: "${{ github.event.repository.name }}"
+          CR_PAGES_BRANCH: "gh-pages"
         with:
           skip_packaging: true
  
