@@ -3,10 +3,10 @@ entries:
   k8s-script-executor:
   - apiVersion: v2
     appVersion: 1.0.0
-    created: "2025-03-07T00:22:04.077097421Z"
+    created: "2025-03-07T00:37:03.669091243Z"
     description: A Helm chart for Kubernetes Script Executor
-    digest: bd07356623f0f39b56037263dfa9903721e8d807ccb2e23bdb02d55f2c16da4a
-    home: https://github.com/alvdevcl/k8s-script-executor
+    digest: 85657b76adc437aa97156e540ef73837a083ffa0a2d8bc5910a6e5f4652f9c88
+    home: https://github.com/decloudz/k8s-script-executor
     keywords:
     - kubernetes
     - script-executor
@@ -16,9 +16,9 @@ entries:
       name: Ade Adegboye
     name: k8s-script-executor
     sources:
-    - https://github.com/alvdevcl/k8s-script-executor
+    - https://github.com/decloudz/k8s-script-executor
     type: application
     urls:
-    - https://alvdevcl.github.io/k8s-script-executor/k8s-script-executor-1.0.0.tgz
+    - https://decloudz.github.io/k8s-script-executor/k8s-script-executor-1.0.0.tgz
     version: 1.0.0
-generated: "2025-03-07T00:22:04.076549503Z"
+generated: "2025-03-07T00:37:03.668204298Z"
