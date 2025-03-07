@@ -3,9 +3,9 @@ entries:
   k8s-script-executor:
   - apiVersion: v2
     appVersion: 1.0.0
-    created: "2025-03-07T00:39:58.257175518Z"
+    created: "2025-03-07T00:48:26.416792606Z"
     description: A Helm chart for Kubernetes Script Executor
-    digest: f5e10ace404b563090b37e42e41fa815ffe8f29e38e5499377deeb180eacab2c
+    digest: 952417af56a00a894ad4b504c96685722b0bfeedbadff165fa6ed2e796ac2eb8
     home: https://github.com/decloudz/k8s-script-executor
     keywords:
     - kubernetes
@@ -21,4 +21,4 @@ entries:
     urls:
     - https://decloudz.github.io/k8s-script-executor/k8s-script-executor-1.0.0.tgz
     version: 1.0.0
-generated: "2025-03-07T00:39:58.256645754Z"
+generated: "2025-03-07T00:48:26.415889298Z"
