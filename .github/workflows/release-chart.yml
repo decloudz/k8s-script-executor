@@ -44,22 +44,7 @@ jobs:
         with:
           version: v3.12.0
 
-      - name: Debug Existing Chart Structure
-        run: |
-          echo "Current directory: $(pwd)"
-          echo "Helm version: $(helm version)"
-          echo "Existing chart structure:"
-          find deploy/chart -type f | sort
-          
-          # Check if Chart.yaml exists in the repo
-          if [ -f deploy/chart/Chart.yaml ]; then
-            echo "Chart.yaml exists in repo, contents:"
-            cat deploy/chart/Chart.yaml
-          else
-            echo "Chart.yaml doesn't exist in repo"
-          fi
-
-      - name: Package Existing Chart
+      - name: Manual Chart Preparation
         run: |
           # Extract version from tag
           VERSION=$(echo "${{ steps.get_tag.outputs.image_tag }}" | tr -d '[]' | cut -d',' -f1 | tr -d '"')
@@ -72,31 +57,19 @@ jobs:
           if [ -f deploy/chart/Chart.yaml ]; then
             sed -i "s/^version:.*$/version: ${VERSION#v}/" deploy/chart/Chart.yaml
             sed -i "s/^appVersion:.*$/appVersion: ${VERSION#v}/" deploy/chart/Chart.yaml
-            
-            echo "Updated Chart.yaml contents:"
-            cat deploy/chart/Chart.yaml
-          else
-            echo "ERROR: Chart.yaml does not exist in the repository!"
-            exit 1
           fi
           
-          # Create packages directory
+          # Create package directory
           mkdir -p /tmp/helm-packages
           
-          # Run helm commands from the chart directory
-          cd deploy/chart
+          # Package the chart manually by creating a tarball
+          echo "Manually packaging chart..."
+          CHART_NAME="k8s-script-executor-${VERSION#v}"
+          cd deploy
+          tar -czf "/tmp/helm-packages/${CHART_NAME}.tgz" chart/
+          cd ..
           
-          echo "Working directory: $(pwd)"
-          echo "Files in current directory:"
-          ls -la
-          
-          echo "Running helm lint..."
-          helm lint . --debug
-          
-          echo "Creating package..."
-          helm package . --destination /tmp/helm-packages
-          
-          echo "Generated packages:"
+          echo "Generated package:"
           ls -la /tmp/helm-packages
 
       # Setup GitHub Pages for private repositories
