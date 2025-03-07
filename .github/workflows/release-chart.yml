@@ -146,49 +146,47 @@ jobs:
           cp .cr-index/index.yaml gh-pages-repo/
           cp .cr-index/*.tgz gh-pages-repo/ || true
           
-          # Convert README.md to index.html for GitHub Pages
+          # Create index.html for GitHub Pages
           echo "Creating index.html from README.md for GitHub Pages..."
           if [ -f README.md ]; then
-            # Create a simple HTML wrapper for the README content
-            cat > gh-pages-repo/index.html << EOF
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Kubernetes Script Executor</title>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/github-markdown-css/5.1.0/github-markdown.min.css">
-    <style>
-        .markdown-body {
-            box-sizing: border-box;
-            min-width: 200px;
-            max-width: 980px;
-            margin: 0 auto;
-            padding: 45px;
-        }
-        @media (max-width: 767px) {
-            .markdown-body {
-                padding: 15px;
-            }
-        }
-    </style>
-</head>
-<body>
-    <div class="markdown-body">
-        <div id="readme-content"></div>
-    </div>
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <script>
-        // Fetch and render the README
-        fetch('https://raw.githubusercontent.com/${{ github.repository }}/main/README.md')
-            .then(response => response.text())
-            .then(text => {
-                document.getElementById('readme-content').innerHTML = marked.parse(text);
-            });
-    </script>
-</body>
-</html>
-EOF
+            # Create index.html with multiple echo statements
+            echo "<!DOCTYPE html>" > gh-pages-repo/index.html
+            echo "<html lang=\"en\">" >> gh-pages-repo/index.html
+            echo "<head>" >> gh-pages-repo/index.html
+            echo "    <meta charset=\"UTF-8\">" >> gh-pages-repo/index.html
+            echo "    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">" >> gh-pages-repo/index.html
+            echo "    <title>Kubernetes Script Executor</title>" >> gh-pages-repo/index.html
+            echo "    <link rel=\"stylesheet\" href=\"https://cdnjs.cloudflare.com/ajax/libs/github-markdown-css/5.1.0/github-markdown.min.css\">" >> gh-pages-repo/index.html
+            echo "    <style>" >> gh-pages-repo/index.html
+            echo "        .markdown-body {" >> gh-pages-repo/index.html
+            echo "            box-sizing: border-box;" >> gh-pages-repo/index.html
+            echo "            min-width: 200px;" >> gh-pages-repo/index.html
+            echo "            max-width: 980px;" >> gh-pages-repo/index.html
+            echo "            margin: 0 auto;" >> gh-pages-repo/index.html
+            echo "            padding: 45px;" >> gh-pages-repo/index.html
+            echo "        }" >> gh-pages-repo/index.html
+            echo "        @media (max-width: 767px) {" >> gh-pages-repo/index.html
+            echo "            .markdown-body {" >> gh-pages-repo/index.html
+            echo "                padding: 15px;" >> gh-pages-repo/index.html
+            echo "            }" >> gh-pages-repo/index.html
+            echo "        }" >> gh-pages-repo/index.html
+            echo "    </style>" >> gh-pages-repo/index.html
+            echo "</head>" >> gh-pages-repo/index.html
+            echo "<body>" >> gh-pages-repo/index.html
+            echo "    <div class=\"markdown-body\">" >> gh-pages-repo/index.html
+            echo "        <div id=\"readme-content\"></div>" >> gh-pages-repo/index.html
+            echo "    </div>" >> gh-pages-repo/index.html
+            echo "    <script src=\"https://cdn.jsdelivr.net/npm/marked/marked.min.js\"></script>" >> gh-pages-repo/index.html
+            echo "    <script>" >> gh-pages-repo/index.html
+            echo "        // Fetch and render the README" >> gh-pages-repo/index.html
+            echo "        fetch('https://raw.githubusercontent.com/${{ github.repository }}/main/README.md')" >> gh-pages-repo/index.html
+            echo "            .then(response => response.text())" >> gh-pages-repo/index.html
+            echo "            .then(text => {" >> gh-pages-repo/index.html
+            echo "                document.getElementById('readme-content').innerHTML = marked.parse(text);" >> gh-pages-repo/index.html
+            echo "            });" >> gh-pages-repo/index.html
+            echo "    </script>" >> gh-pages-repo/index.html
+            echo "</body>" >> gh-pages-repo/index.html
+            echo "</html>" >> gh-pages-repo/index.html
           fi
           
           # Push the changes to gh-pages branch
