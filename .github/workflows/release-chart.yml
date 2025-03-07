@@ -89,7 +89,7 @@ jobs:
           git config --global user.name "$GITHUB_ACTOR"
           git config --global user.email "$GITHUB_ACTOR@users.noreply.github.com"
           
-          # Create a directory for the index file
+          # Create a directory for the index file and packages
           mkdir -p .cr-index
           
           # Create gh-pages branch if it doesn't exist
@@ -112,18 +112,21 @@ jobs:
           git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
           cd ..
           
+          # Copy the chart packages to the working directory
+          cp /tmp/helm-packages/*.tgz .cr-index/ || true
+          
           # Copy the existing index.yaml if it exists
           if [ -f gh-pages-repo/index.yaml ]; then
             cp gh-pages-repo/index.yaml .cr-index/
           fi
           
-          # Create or update the index
+          # Create or update the index (with a single directory argument)
           helm repo index --url "https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}" \
-            --merge .cr-index/index.yaml .cr-index/ /tmp/helm-packages
+            --merge .cr-index/index.yaml .cr-index/
             
           # Copy the updated index and package to the gh-pages repo
           cp .cr-index/index.yaml gh-pages-repo/
-          cp /tmp/helm-packages/*.tgz gh-pages-repo/ || true
+          cp .cr-index/*.tgz gh-pages-repo/ || true
           
           # Push the changes to gh-pages branch
           cd gh-pages-repo
