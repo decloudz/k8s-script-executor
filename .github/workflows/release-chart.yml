@@ -71,6 +71,10 @@ jobs:
           
           echo "Generated package:"
           ls -la /tmp/helm-packages
+          
+          # Create a tag for this version
+          git tag -a "v${VERSION#v}" -m "Release ${VERSION#v}" || true
+          echo "RELEASE_TAG=v${VERSION#v}" >> $GITHUB_ENV
 
       # Setup GitHub Pages for private repositories
       - name: Setup GitHub Pages
@@ -78,18 +82,43 @@ jobs:
         uses: actions/configure-pages@v4
         if: always()
 
-      - name: Run chart-releaser
-        uses: helm/chart-releaser-action@v1.6.0
-        env:
-          CR_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
-          CR_PACKAGE_PATH: /tmp/helm-packages
-          CR_SKIP_EXISTING: "false"
-          # Additional settings for private repositories
-          CR_GIT_BASE_URL: "https://api.github.com/"
-          CR_GIT_UPLOAD_URL: "https://uploads.github.com/"
-          CR_OWNER: "${{ github.repository_owner }}"
-          CR_GIT_REPO: "${{ github.event.repository.name }}"
-          CR_PAGES_BRANCH: "gh-pages"
-        with:
-          skip_packaging: true
+      # Use direct commands to update the Helm repository
+      - name: Manually Update Helm Repository
+        run: |
+          # Create a directory for the index file
+          mkdir -p .cr-index
+          
+          # Clone the gh-pages branch
+          git clone --single-branch --branch gh-pages https://${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }} gh-pages-repo || true
+          
+          # Copy the existing index.yaml if it exists
+          if [ -f gh-pages-repo/index.yaml ]; then
+            cp gh-pages-repo/index.yaml .cr-index/
+          fi
+          
+          # Create or update the index
+          helm repo index --url "https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}" \
+            --merge .cr-index/index.yaml .cr-index/
+            
+          # Copy the updated index to the gh-pages repo
+          cp .cr-index/index.yaml gh-pages-repo/
+          
+          # Push the changes to gh-pages branch
+          cd gh-pages-repo
+          git add index.yaml
+          git commit -m "Update Helm repository index" || true
+          git push || true
+          cd ..
+          
+          # Check if a GitHub release exists for this tag
+          RELEASE_EXISTS=$(curl -s -I -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/tags/${{ env.RELEASE_TAG }}" | grep "HTTP/1.1 200")
+            
+          # Create a release if it doesn't exist
+          if [ -z "$RELEASE_EXISTS" ]; then
+            echo "Creating GitHub release for ${{ env.RELEASE_TAG }}"
+            gh release create ${{ env.RELEASE_TAG }} /tmp/helm-packages/* --title "Release ${{ env.RELEASE_TAG }}" --generate-notes
+          else
+            echo "Release already exists for ${{ env.RELEASE_TAG }}"
+          fi
  
