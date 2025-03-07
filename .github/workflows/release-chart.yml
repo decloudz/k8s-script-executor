@@ -59,7 +59,7 @@ jobs:
             echo "Chart.yaml doesn't exist in repo"
           fi
 
-      - name: Create Helm Chart Package
+      - name: Package Existing Chart
         run: |
           # Extract version from tag
           VERSION=$(echo "${{ steps.get_tag.outputs.image_tag }}" | tr -d '[]' | cut -d',' -f1 | tr -d '"')
@@ -67,46 +67,34 @@ jobs:
             VERSION="1.0.0"
           fi
           
-          # Create a clean directory for our chart
-          CHART_DIR="/tmp/helm-chart"
-          mkdir -p "${CHART_DIR}"
-          
-          # Create bare minimum chart structure
-          mkdir -p "${CHART_DIR}/templates"
-          
-          # Copy templates
-          echo "Copying templates from deploy/chart/templates to ${CHART_DIR}/templates"
-          cp -r deploy/chart/templates/* "${CHART_DIR}/templates/" || true
-          
-          # Copy values.yaml
-          echo "Copying values.yaml"
-          cp deploy/chart/values.yaml "${CHART_DIR}/" || true
-          
-          # Create a minimal but complete Chart.yaml
-          echo "Creating Chart.yaml with version ${VERSION#v}"
-          cat > "${CHART_DIR}/Chart.yaml" << EOF
-apiVersion: v2
-name: k8s-script-executor
-description: A Helm chart for Kubernetes Script Executor
-type: application
-version: ${VERSION#v}
-appVersion: ${VERSION#v}
-EOF
-          
-          # Debug the chart directory structure
-          echo "Chart directory structure:"
-          find "${CHART_DIR}" -type f | sort
-          
-          echo "Chart.yaml contents:"
-          cat "${CHART_DIR}/Chart.yaml"
+          # Update version in the existing Chart.yaml
+          echo "Updating version in existing Chart.yaml"
+          if [ -f deploy/chart/Chart.yaml ]; then
+            sed -i "s/^version:.*$/version: ${VERSION#v}/" deploy/chart/Chart.yaml
+            sed -i "s/^appVersion:.*$/appVersion: ${VERSION#v}/" deploy/chart/Chart.yaml
+            
+            echo "Updated Chart.yaml contents:"
+            cat deploy/chart/Chart.yaml
+          else
+            echo "ERROR: Chart.yaml does not exist in the repository!"
+            exit 1
+          fi
           
           # Create packages directory
           mkdir -p /tmp/helm-packages
           
-          # Package the chart
-          echo "Packaging chart from ${CHART_DIR}"
-          helm lint "${CHART_DIR}" --debug
-          helm package "${CHART_DIR}" --destination /tmp/helm-packages
+          # Run helm commands from the chart directory
+          cd deploy/chart
+          
+          echo "Working directory: $(pwd)"
+          echo "Files in current directory:"
+          ls -la
+          
+          echo "Running helm lint..."
+          helm lint . --debug
+          
+          echo "Creating package..."
+          helm package . --destination /tmp/helm-packages
           
           echo "Generated packages:"
           ls -la /tmp/helm-packages
