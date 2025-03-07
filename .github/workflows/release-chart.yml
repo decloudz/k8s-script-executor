@@ -85,11 +85,32 @@ jobs:
       # Use direct commands to update the Helm repository
       - name: Manually Update Helm Repository
         run: |
+          # Set git identity globally to ensure it's used for all git operations
+          git config --global user.name "$GITHUB_ACTOR"
+          git config --global user.email "$GITHUB_ACTOR@users.noreply.github.com"
+          
           # Create a directory for the index file
           mkdir -p .cr-index
           
-          # Clone the gh-pages branch
-          git clone --single-branch --branch gh-pages https://${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }} gh-pages-repo || true
+          # Create gh-pages branch if it doesn't exist
+          if ! git ls-remote --heads https://github.com/${{ github.repository }} gh-pages | grep gh-pages; then
+            echo "Creating gh-pages branch as it doesn't exist"
+            git checkout --orphan gh-pages
+            git reset --hard
+            git commit --allow-empty -m "Create gh-pages branch"
+            git push origin gh-pages
+            git checkout main
+          fi
+          
+          # Clone the gh-pages branch with credentials
+          echo "Cloning gh-pages branch..."
+          git clone --single-branch --branch gh-pages https://${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }} gh-pages-repo
+          
+          # Set git identity in the cloned repository as well
+          cd gh-pages-repo
+          git config user.name "$GITHUB_ACTOR"
+          git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
+          cd ..
           
           # Copy the existing index.yaml if it exists
           if [ -f gh-pages-repo/index.yaml ]; then
@@ -98,26 +119,32 @@ jobs:
           
           # Create or update the index
           helm repo index --url "https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}" \
-            --merge .cr-index/index.yaml .cr-index/
+            --merge .cr-index/index.yaml .cr-index/ /tmp/helm-packages
             
-          # Copy the updated index to the gh-pages repo
+          # Copy the updated index and package to the gh-pages repo
           cp .cr-index/index.yaml gh-pages-repo/
+          cp /tmp/helm-packages/*.tgz gh-pages-repo/ || true
           
           # Push the changes to gh-pages branch
           cd gh-pages-repo
           git add index.yaml
-          git commit -m "Update Helm repository index" || true
-          git push || true
+          git add *.tgz || true
+          git commit -m "Update Helm repository index and packages" || echo "No changes to commit"
+          git push
           cd ..
           
+          # Setup GitHub CLI
+          echo "Setting up GitHub CLI..."
+          gh auth login --with-token <<< "${{ secrets.GITHUB_TOKEN }}"
+          
           # Check if a GitHub release exists for this tag
-          RELEASE_EXISTS=$(curl -s -I -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/${{ github.repository }}/releases/tags/${{ env.RELEASE_TAG }}" | grep "HTTP/1.1 200")
+          echo "Checking if release exists for tag ${{ env.RELEASE_TAG }}..."
+          RELEASE_EXISTS=$(gh release view ${{ env.RELEASE_TAG }} 2>/dev/null || echo "")
             
           # Create a release if it doesn't exist
           if [ -z "$RELEASE_EXISTS" ]; then
             echo "Creating GitHub release for ${{ env.RELEASE_TAG }}"
-            gh release create ${{ env.RELEASE_TAG }} /tmp/helm-packages/* --title "Release ${{ env.RELEASE_TAG }}" --generate-notes
+            gh release create ${{ env.RELEASE_TAG }} /tmp/helm-packages/*.tgz --title "Release ${{ env.RELEASE_TAG }}" --generate-notes
           else
             echo "Release already exists for ${{ env.RELEASE_TAG }}"
           fi
