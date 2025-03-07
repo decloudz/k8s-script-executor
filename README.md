@@ -19,6 +19,88 @@ A lightweight HTTP server that executes predefined scripts inside Kubernetes pod
 docker pull ghcr.io/alvdevcl/k8s-script-executor:latest
 ```
 
+### Using Helm Chart
+
+The script executor can be installed on Kubernetes using our Helm chart:
+
+#### Add the Helm Repository
+
+```bash
+helm repo add k8s-script-executor https://decloudz.github.io/k8s-script-executor
+helm repo update
+```
+
+#### Install the Chart
+
+```bash
+helm install script-executor k8s-script-executor/k8s-script-executor \
+  --namespace your-namespace \
+  --create-namespace \
+  --set env[0].name=NAMESPACE \
+  --set env[0].value=your-namespace \
+  --set env[1].name=POD_LABEL_SELECTOR \
+  --set env[1].value="app=your-app"
+```
+
+#### Configuration Values
+
+The following table lists the configurable parameters for the chart:
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `image.repository` | Image repository | `ghcr.io/alvdevcl/k8s-script-executor` |
+| `image.tag` | Image tag | `latest` |
+| `image.pullPolicy` | Image pull policy | `IfNotPresent` |
+| `service.type` | Kubernetes service type | `ClusterIP` |
+| `service.port` | Service port | `80` |
+| `env` | Environment variables | `[]` |
+| `resources` | CPU/Memory resource requests/limits | `{}` |
+| `nodeSelector` | Node labels for pod assignment | `{}` |
+| `tolerations` | Tolerations for pod assignment | `[]` |
+| `affinity` | Node/Pod affinities | `{}` |
+| `config.scripts` | List of predefined scripts | See values.yaml |
+
+#### Using a Custom Values File
+
+Create a `values.yaml` file with your custom configuration:
+
+```yaml
+image:
+  tag: "1.0.0"
+
+env:
+  - name: NAMESPACE
+    value: "production"
+  - name: POD_LABEL_SELECTOR
+    value: "app=database"
+
+config:
+  scripts:
+    - name: "check-disk-space"
+      command: "df -h"
+    - name: "check-memory"
+      command: "free -m"
+```
+
+Then install the chart with:
+
+```bash
+helm install script-executor k8s-script-executor/k8s-script-executor \
+  -f values.yaml \
+  --namespace your-namespace \
+  --create-namespace
+```
+
+#### Upgrading
+
+To upgrade your deployment:
+
+```bash
+helm upgrade script-executor k8s-script-executor/k8s-script-executor \
+  --namespace your-namespace \
+  -f values.yaml
+```
+
 ### Building from Source
 
 ```bash
