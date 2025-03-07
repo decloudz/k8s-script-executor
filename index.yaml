@@ -1,0 +1,24 @@
+apiVersion: v1
+entries:
+  k8s-script-executor:
+  - apiVersion: v2
+    appVersion: 1.0.0
+    created: "2025-03-07T00:07:48.555683183Z"
+    description: A Helm chart for Kubernetes Script Executor
+    digest: 416e1f152663321219be0f1b1dcaccb5e8d3147a3571c6b963380ea66ae7625f
+    home: https://github.com/alvdevcl/k8s-script-executor
+    keywords:
+    - kubernetes
+    - script-executor
+    - automation
+    maintainers:
+    - email: alveocloudevops@gmail.com
+      name: Ade Adegboye
+    name: k8s-script-executor
+    sources:
+    - https://github.com/alvdevcl/k8s-script-executor
+    type: application
+    urls:
+    - https://github.com/alvdevcl/k8s-script-executor/releases/download/k8s-script-executor-1.0.0/k8s-script-executor-1.0.0.tgz
+    version: 1.0.0
+generated: "2025-03-07T00:07:48.55569225Z"
