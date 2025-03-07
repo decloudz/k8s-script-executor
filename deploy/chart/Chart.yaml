@@ -11,6 +11,6 @@ keywords:
   - kubernetes
   - script-executor
   - automation
-home: "https://github.com/alvdevcl/k8s-script-executor"
+home: "https://github.com/decloudz/k8s-script-executor"
 sources:
-  - "https://github.com/alvdevcl/k8s-script-executor" 
+  - "https://github.com/decloudz/k8s-script-executor" 
