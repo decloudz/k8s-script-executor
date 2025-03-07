@@ -72,9 +72,27 @@ jobs:
           echo "Generated package:"
           ls -la /tmp/helm-packages
           
-          # Create a tag for this version
-          git tag -a "v${VERSION#v}" -m "Release ${VERSION#v}" || true
-          echo "RELEASE_TAG=v${VERSION#v}" >> $GITHUB_ENV
+          # Create a tag for this version and push it to remote
+          echo "Creating and pushing git tag v${VERSION#v}..."
+          TAG_NAME="v${VERSION#v}"
+          
+          # Check if tag already exists locally
+          if git rev-parse "$TAG_NAME" >/dev/null 2>&1; then
+            echo "Tag $TAG_NAME already exists locally"
+          else
+            git tag -a "$TAG_NAME" -m "Release ${VERSION#v}"
+            echo "Tag $TAG_NAME created locally"
+          fi
+          
+          # Check if tag exists on remote
+          if git ls-remote --tags origin | grep -q "$TAG_NAME"; then
+            echo "Tag $TAG_NAME already exists on remote"
+          else
+            git push origin "$TAG_NAME"
+            echo "Tag $TAG_NAME pushed to remote"
+          fi
+          
+          echo "RELEASE_TAG=$TAG_NAME" >> $GITHUB_ENV
 
       # Setup GitHub Pages for private repositories
       - name: Setup GitHub Pages
