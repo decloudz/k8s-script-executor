@@ -1,25 +1,27 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: exec-api
+  name: k8s-script-executor
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: exec-api
+      app: k8s-script-executor
   template:
     metadata:
       labels:
-        app: exec-api
+        app: k8s-script-executor
     spec:
+      imagePullSecrets:
+        - name: ghcr-login-secret
       containers:
-      - name: api-server
-        image: ghcr.io/alvdevcl/k8s-script-executor:latest
+      - name: server
+        image: ghcr.io/decloudz/k8s-script-executor@sha256:82eb4d889cf980775105c37cccf3e472eb8d79fe48047bc84270a03d2a071f89
         ports:
         - containerPort: 8080
         env:
         - name: NAMESPACE
-          value: "ac-prime-service-dev"
+          value: "prime-cloud"
         - name: SCRIPTS_JSON_PATH
           value: "/scripts/scripts.json"
         - name: POD_LABEL
