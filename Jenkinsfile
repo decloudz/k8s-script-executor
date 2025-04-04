@@ -14,7 +14,7 @@ def config = [
     semver: [
         gitVersionTool: "5.3.7"
     ],
-    docker: [
+    container: [
         registry: "ghcr.io",
         imageName: "alvdevcl/go-script-executor"
     ],
@@ -65,39 +65,44 @@ node("centos-imagefactory") {
             go version
         """
         
-        echo "Installing Docker"
-        sh "curl -fsSL https://get.docker.com | sh"
-        sh "docker --version"
+        echo "Installing Podman"
+        sh """
+            # For RHEL/CentOS
+            yum -y install podman
+            # If on Ubuntu/Debian, use:
+            # apt-get update && apt-get install -y podman
+            podman --version
+        """
     }
 
-    stage("Build Docker Image") {
+    stage("Build Container Image") {
         // Add Go to path for this stage as well
         sh "export PATH=\$PATH:/usr/local/go/bin"
         
-        // Log in to Docker registry
+        // Log in to Container registry
         withCredentials([usernamePassword(credentialsId: "${config.git_cred}", 
-                                          usernameVariable: 'DOCKER_USER', 
-                                          passwordVariable: 'DOCKER_PASS')]) {
-            sh "echo ${DOCKER_PASS} | docker login ${config.docker.registry} -u ${DOCKER_USER} --password-stdin"
+                                          usernameVariable: 'REGISTRY_USER', 
+                                          passwordVariable: 'REGISTRY_PASS')]) {
+            sh "echo ${REGISTRY_PASS} | podman login ${config.container.registry} -u ${REGISTRY_USER} --password-stdin"
         }
 
         // Build tags based on versioning strategy
         imageTags = [
-            "${config.docker.registry}/${config.docker.imageName}:latest",
-            "${config.docker.registry}/${config.docker.imageName}:${version}",
-            "${config.docker.registry}/${config.docker.imageName}:v${version}"
+            "${config.container.registry}/${config.container.imageName}:latest",
+            "${config.container.registry}/${config.container.imageName}:${version}",
+            "${config.container.registry}/${config.container.imageName}:v${version}"
         ]
         
         def tagsString = imageTags.collect { "-t ${it}" }.join(' ')
         
-        // Build and push Docker image
-        sh "docker build ${tagsString} ."
+        // Build and push Container image using Podman
+        sh "podman build ${tagsString} ."
         
         imageTags.each { tag ->
-            sh "docker push ${tag}"
+            sh "podman push ${tag}"
         }
         
-        echo "Docker image built and pushed successfully: ${imageTags.join(', ')}"
+        echo "Container image built and pushed successfully: ${imageTags.join(', ')}"
     }
 
     stage("Package and Push Helm Chart") {
@@ -118,7 +123,7 @@ node("centos-imagefactory") {
         sh "sed -i 's/^version:.*/version: ${newChartVersion}/' ${chartYamlPath}"
         echo "Updated Helm chart version to: ${newChartVersion}"
         
-        // Update the image.tag in values.yaml to point to the new Docker image
+        // Update the image.tag in values.yaml to point to the new Container image
         sh "sed -i 's|tag: .*|tag: \"${version}\"|' ${config.helm.chartPath}/values.yaml"
         
         // Package the Helm chart
@@ -143,7 +148,7 @@ node("centos-imagefactory") {
             git config --global user.email "jenkins@example.com"
             git config --global user.name "Jenkins CI"
             git add ${chartYamlPath} ${config.helm.chartPath}/values.yaml
-            git commit -m "Updating Helm chart version to ${newChartVersion} and Docker image tag to ${version}"
+            git commit -m "Updating Helm chart version to ${newChartVersion} and Container image tag to ${version}"
             git push origin HEAD
         """
     }
