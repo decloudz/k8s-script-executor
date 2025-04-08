@@ -155,8 +155,8 @@ func main() {
 	r := gin.Default()
 
 	// Define API routes
-	r.GET("/scripts", listScripts)
-	r.POST("/execute", executeScript)
+	r.GET("/v1/scripts", listScripts)
+	r.POST("/v1/execute", executeScript)
 
 	// Start server on port 8080
 	port := "8080"
