@@ -13,10 +13,10 @@ spec:
         app: k8s-script-executor
     spec:
       imagePullSecrets:
-        - name: ghcr-login-secret
+        - name: ghcr-repo-login-secret
       containers:
       - name: server
-        image: ghcr.io/decloudz/k8s-script-executor@sha256:82eb4d889cf980775105c37cccf3e472eb8d79fe48047bc84270a03d2a071f89
+        image: ghcr.io/decloudz/k8s-script-executor:sha-c7ec518
         ports:
         - containerPort: 8080
         env:
