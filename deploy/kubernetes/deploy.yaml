@@ -16,19 +16,19 @@ spec:
         - name: ghcr-repo-login-secret
       containers:
       - name: server
-        image: ghcr.io/decloudz/k8s-script-executor:sha-c7ec518
+        image: ghcr.io/decloudz/k8s-script-executor:sha-c1ca083
         ports:
         - containerPort: 8080
         env:
         - name: NAMESPACE
           value: "prime-cloud"
-        - name: SCRIPTS_JSON_PATH
-          value: "/scripts/scripts.json"
+        - name: SCRIPTS_PATH
+          value: "/config/scripts.json"
         - name: POD_LABEL
           value: "app=query-server"  # Can be overridden by API request
         volumeMounts:
         - name: scripts-config
-          mountPath: /scripts
+          mountPath: /config
       volumes:
       - name: scripts-config
         configMap:
