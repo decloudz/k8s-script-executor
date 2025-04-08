@@ -6,11 +6,23 @@ data:
   scripts.json: |
     [
       {
+        "id": "pwd-script",
         "name": "where am i",
+        "description": "Prints the current working directory in the target pod.",
+        "label": "Show Current Directory",
+        "type": "string",
+        "optional": true,
         "command": "pwd"
       },
       {
+        "id": "list-home",
         "name": "list home directory",
-        "command": "ls -al /home"
+        "description": "Lists the contents of the /home directory.",
+        "label": "List Home",
+        "command": "ls -al /home",
+        "options": [
+          {"id": "opt1", "name": "Option 1 Name"},
+          {"id": "opt2", "name": "Option 2 Name"}
+        ]
       }
     ]

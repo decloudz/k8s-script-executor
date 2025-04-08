@@ -139,11 +139,13 @@ func listScripts(c *gin.Context) {
 	if err != nil {
 		log.Printf("Error loading script definitions: %v", err)
 		statusCode := http.StatusInternalServerError
-		errMsg := fmt.Sprintf("Server configuration error: Failed to load or parse script definitions file: %v", err)
+		// Optionally set 404 if file not found, but 500 is generally okay for server config issues
 		if os.IsNotExist(err) {
-			errMsg = fmt.Sprintf("Server configuration error: Script definitions file not found at %s", config.ScriptsPath)
+			// statusCode = http.StatusNotFound // Keep as 500 for now, simpler
+			log.Printf("Script definitions file not found at %s", config.ScriptsPath)
 		}
-		c.JSON(statusCode, gin.H{"error": errMsg})
+		// Return an empty array on error, but set the correct HTTP status code
+		c.JSON(statusCode, []ParameterView{}) // Return [] instead of {"error": ...}
 		return
 	}
 
@@ -165,12 +167,14 @@ func listScripts(c *gin.Context) {
 }
 
 // executeScript handles the /v1/execute endpoint.
-// It finds the requested script by name and executes its command.
+// It finds the requested script by name, prepares environment variables from parameters,
+// and executes its command.
 func executeScript(c *gin.Context) {
 	config := loadConfig()
 
 	var request struct {
-		ScriptName string `json:"script_name"` // Client specifies script by name
+		ScriptName string            `json:"script_name"`          // Client specifies script by name
+		Parameters map[string]string `json:"parameters,omitempty"` // Optional key-value parameters
 	}
 
 	if err := c.ShouldBindJSON(&request); err != nil {
@@ -213,26 +217,72 @@ func executeScript(c *gin.Context) {
 		return
 	}
 
+	// Prepare environment variables from parameters
+	envPrefix := ""
+	if len(request.Parameters) > 0 {
+		var envVars []string
+		for key, value := range request.Parameters {
+			// Basic validation for environment variable names (adjust regex as needed)
+			// This prevents injecting arbitrary commands via the key
+			if !isValidEnvVarName(key) {
+				c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Invalid parameter name (must be alphanumeric + underscore): %s", key)})
+				return
+			}
+			// Quote the value to handle spaces and special characters safely for shell
+			quotedValue := fmt.Sprintf("%q", value)
+			envVars = append(envVars, fmt.Sprintf("%s=%s", key, quotedValue))
+		}
+		envPrefix = strings.Join(envVars, " ") + " " // Add trailing space
+	}
+
+	// Construct the command with environment variable prefix
+	// IMPORTANT: Assumes the pod's default shell (/bin/bash here) interprets the env var setting prefix correctly.
+	fullCommand := envPrefix + selectedDefinition.Command
+
 	// Execute the script's command in the target pod
-	execCmd := fmt.Sprintf("kubectl exec -n %s %s -- /bin/bash -c '%s'", config.Namespace, targetPod, selectedDefinition.Command)
+	// Use single quotes around the full command to prevent local shell expansion
+	execCmd := fmt.Sprintf("kubectl exec -n %s %s -- /bin/bash -c '%s'",
+		config.Namespace,
+		targetPod,
+		fullCommand, // Pass the command with potential env var prefix
+	)
 	cmd := exec.Command("sh", "-c", execCmd)
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		log.Printf("Error executing script '%s' (command: '%s') in pod '%s': %v, output: %s", selectedDefinition.Name, selectedDefinition.Command, targetPod, err, string(output))
+		log.Printf("Error executing script '%s' (id: %s) in pod '%s': %v, output: %s", selectedDefinition.Name, selectedDefinition.ID, targetPod, err, string(output))
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"script_name": request.ScriptName,
-			"error":       fmt.Sprintf("Script execution failed: %v", err), // Provide a slightly cleaner error
+			"script_name": selectedDefinition.Name, // Return name for consistency with request
+			"script_id":   selectedDefinition.ID,
+			"error":       fmt.Sprintf("Script execution failed: %v", err),
 			"output":      string(output),
 		})
 		return
 	}
 
-	log.Printf("Successfully executed script '%s' in pod '%s'", selectedDefinition.Name, targetPod)
+	log.Printf("Successfully executed script '%s' (id: %s) in pod '%s'", selectedDefinition.Name, selectedDefinition.ID, targetPod)
 	c.JSON(http.StatusOK, gin.H{
-		"script_name": request.ScriptName,
+		"script_name": selectedDefinition.Name,
+		"script_id":   selectedDefinition.ID,
 		"output":      string(output),
 	})
+}
+
+// isValidEnvVarName checks if a string is a valid environment variable name
+// (typically alphanumeric + underscore, not starting with a number).
+// Basic check, can be refined.
+func isValidEnvVarName(name string) bool {
+	if name == "" {
+		return false
+	}
+	// Simple check: Allow A-Z, a-z, 0-9, _
+	// More robust check would use regex: ^[a-zA-Z_][a-zA-Z0-9_]*$
+	for i, r := range name {
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r == '_') || (r >= '0' && r <= '9' && i > 0)) {
+			return false
+		}
+	}
+	return true
 }
 
 func main() {
