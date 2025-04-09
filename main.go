@@ -204,8 +204,8 @@ func executeScript(c *gin.Context) {
 	config := loadConfig()
 
 	var request struct {
-		ScriptName string            `json:"script_name"`          // Client specifies script by name
-		Parameters map[string]string `json:"parameters,omitempty"` // Optional key-value parameters
+		ScriptName string            `json:"script_name"`
+		Parameters map[string]string `json:"parameters,omitempty"`
 	}
 
 	if err := c.ShouldBindJSON(&request); err != nil {
@@ -213,9 +213,13 @@ func executeScript(c *gin.Context) {
 		return
 	}
 
+	// ---> Log: Received execution request
+	log.Printf("Received execute request for script: '%s' with parameters: %v", request.ScriptName, request.Parameters)
+
 	// Load script definitions
 	definitions, err := loadScriptDefinitions(config.ScriptsPath)
 	if err != nil {
+		// Error logged within the function or here
 		log.Printf("Error loading script definitions during execute: %v", err)
 		statusCode := http.StatusInternalServerError
 		errMsg := fmt.Sprintf("Server configuration error: Failed to load or parse script definitions file: %v", err)
@@ -236,54 +240,69 @@ func executeScript(c *gin.Context) {
 	}
 
 	if selectedDefinition == nil {
+		log.Printf("Execute request failed: Script '%s' not found in definitions.", request.ScriptName)
 		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("Script '%s' not found", request.ScriptName)})
 		return
 	}
 
+	// ---> Log: Found script definition
+	log.Printf("Found definition for script '%s' (ID: %s)", selectedDefinition.Name, selectedDefinition.ID)
+
 	// Get the target pod
 	targetPod, err := getTargetPod(config.Namespace, config.PodLabelSelector)
 	if err != nil {
-		// Error already logged in getTargetPod if needed, return specific error to client
+		// Error logged within getTargetPod
+		log.Printf("Execute request failed for script '%s': Could not get target pod: %v", selectedDefinition.Name, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to find target pod: %v", err)})
 		return
 	}
+
+	// ---> Log: Target pod identified
+	log.Printf("Target pod for script '%s' execution: %s (Namespace: %s, Selector: %s)", selectedDefinition.Name, targetPod, config.Namespace, config.PodLabelSelector)
 
 	// Prepare environment variables from parameters
 	envPrefix := ""
 	if len(request.Parameters) > 0 {
 		var envVars []string
 		for key, value := range request.Parameters {
-			// Basic validation for environment variable names (adjust regex as needed)
-			// This prevents injecting arbitrary commands via the key
 			if !isValidEnvVarName(key) {
+				log.Printf("Execute request failed for script '%s': Invalid parameter name '%s'", selectedDefinition.Name, key)
 				c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Invalid parameter name (must be alphanumeric + underscore): %s", key)})
 				return
 			}
-			// Quote the value to handle spaces and special characters safely for shell
 			quotedValue := fmt.Sprintf("%q", value)
 			envVars = append(envVars, fmt.Sprintf("%s=%s", key, quotedValue))
 		}
-		envPrefix = strings.Join(envVars, " ") + " " // Add trailing space
+		envPrefix = strings.Join(envVars, " ") + " "
+		// ---> Log: Prepared environment variables
+		log.Printf("Prepared environment variables for script '%s': %s", selectedDefinition.Name, strings.TrimSpace(envPrefix))
 	}
 
 	// Construct the command with environment variable prefix
-	// IMPORTANT: Assumes the pod's default shell (/bin/bash here) interprets the env var setting prefix correctly.
 	fullCommand := envPrefix + selectedDefinition.Command
 
 	// Execute the script's command in the target pod
-	// Use single quotes around the full command to prevent local shell expansion
 	execCmd := fmt.Sprintf("kubectl exec -n %s %s -- /bin/bash -c '%s'",
 		config.Namespace,
 		targetPod,
-		fullCommand, // Pass the command with potential env var prefix
+		fullCommand,
 	)
+
+	// ---> Log: Constructed kubectl command
+	// Be cautious logging this if 'fullCommand' might contain sensitive parameter values.
+	log.Printf("Constructed kubectl command for script '%s': %s", selectedDefinition.Name, execCmd)
+
 	cmd := exec.Command("sh", "-c", execCmd)
+
+	// ---> Log: Executing command
+	log.Printf("Executing command for script '%s' in pod '%s'...", selectedDefinition.Name, targetPod)
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		log.Printf("Error executing script '%s' (id: %s) in pod '%s': %v, output: %s", selectedDefinition.Name, selectedDefinition.ID, targetPod, err, string(output))
+		// ---> Log: Execution failed (already present, enhanced slightly)
+		log.Printf("Execution FAILED for script '%s' (ID: %s) in pod '%s'. Error: %v. Output: %s", selectedDefinition.Name, selectedDefinition.ID, targetPod, err, string(output))
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"script_name": selectedDefinition.Name, // Return name for consistency with request
+			"script_name": selectedDefinition.Name,
 			"script_id":   selectedDefinition.ID,
 			"error":       fmt.Sprintf("Script execution failed: %v", err),
 			"output":      string(output),
@@ -291,7 +310,9 @@ func executeScript(c *gin.Context) {
 		return
 	}
 
-	log.Printf("Successfully executed script '%s' (id: %s) in pod '%s'", selectedDefinition.Name, selectedDefinition.ID, targetPod)
+	// ---> Log: Execution successful (already present, enhanced slightly)
+	// Consider truncating long output if necessary
+	log.Printf("Execution SUCCESSFUL for script '%s' (ID: %s) in pod '%s'. Output: %s", selectedDefinition.Name, selectedDefinition.ID, targetPod, string(output))
 	c.JSON(http.StatusOK, gin.H{
 		"script_name": selectedDefinition.Name,
 		"script_id":   selectedDefinition.ID,
