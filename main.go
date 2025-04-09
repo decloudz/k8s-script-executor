@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -53,6 +54,14 @@ type ScriptDefinition struct {
 type ScriptResponse struct {
 	Name       string              `json:"name"`
 	Parameters []InputParameterDef `json:"parameters"`
+}
+
+// TaskServiceRequest defines the structure expected from the calling Task Service
+type TaskServiceRequest struct {
+	TaskName    string                 `json:"taskName"`
+	LastRunTime string                 `json:"lastRunTime"` // Assuming string, adjust if needed
+	TrackingID  string                 `json:"trackingId"`
+	TaskData    map[string]interface{} `json:"taskData"` // Use interface{} for flexible value types
 }
 
 // Config holds application configuration
@@ -197,126 +206,132 @@ func listScripts(c *gin.Context) {
 	c.Data(http.StatusOK, "application/json", jsonData)
 }
 
-// executeScript handles the /v1/execute endpoint.
-// It finds the requested script by name, prepares environment variables from parameters,
-// and executes its command.
+// executeScript handles the /v1/execute endpoint, expecting TaskServiceRequest payload.
 func executeScript(c *gin.Context) {
 	config := loadConfig()
 
-	var request struct {
-		ScriptName string            `json:"script_name"`
-		Parameters map[string]string `json:"parameters,omitempty"`
-	}
-
+	// Bind the request body to the TaskServiceRequest struct
+	var request TaskServiceRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request payload"})
+		log.Printf("Failed to bind JSON payload: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request payload format"})
 		return
 	}
 
 	// ---> Log: Received execution request
-	log.Printf("Received execute request for script: '%s' with parameters: %v", request.ScriptName, request.Parameters)
+	log.Printf("Received execute request via Task Service - TaskName: '%s', TrackingID: %s, TaskData: %v", request.TaskName, request.TrackingID, request.TaskData)
+
+	// --- Input Validation ---
+	if request.TaskName == "" {
+		log.Printf("Execute request failed: taskName field is missing or empty.")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "taskName field is required"})
+		return
+	}
+	// Add validation for TrackingID if needed
 
 	// Load script definitions
 	definitions, err := loadScriptDefinitions(config.ScriptsPath)
 	if err != nil {
-		// Error logged within the function or here
-		log.Printf("Error loading script definitions during execute: %v", err)
+		log.Printf("Error loading script definitions during execute: %v, TrackingID: %s", err, request.TrackingID)
 		statusCode := http.StatusInternalServerError
 		errMsg := fmt.Sprintf("Server configuration error: Failed to load or parse script definitions file: %v", err)
 		if os.IsNotExist(err) {
 			errMsg = fmt.Sprintf("Server configuration error: Script definitions file not found at %s", config.ScriptsPath)
 		}
-		c.JSON(statusCode, gin.H{"error": errMsg})
+		c.JSON(statusCode, gin.H{"error": errMsg, "trackingId": request.TrackingID})
 		return
 	}
 
-	// Find the requested script definition by name
+	// Find the requested script definition by TaskName (matching ScriptDefinition.Name)
 	var selectedDefinition *ScriptDefinition
 	for i := range definitions {
-		if definitions[i].Name == request.ScriptName {
+		if definitions[i].Name == request.TaskName {
 			selectedDefinition = &definitions[i]
 			break
 		}
 	}
 
 	if selectedDefinition == nil {
-		log.Printf("Execute request failed: Script '%s' not found in definitions.", request.ScriptName)
-		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("Script '%s' not found", request.ScriptName)})
+		log.Printf("Execute request failed: Script with name '%s' not found in definitions. TrackingID: %s", request.TaskName, request.TrackingID)
+		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("Script '%s' not found"), "trackingId": request.TrackingID})
 		return
 	}
 
 	// ---> Log: Found script definition
-	log.Printf("Found definition for script '%s' (ID: %s)", selectedDefinition.Name, selectedDefinition.ID)
+	log.Printf("Found definition for script '%s' (ID: %s). TrackingID: %s", selectedDefinition.Name, selectedDefinition.ID, request.TrackingID)
 
 	// Get the target pod
 	targetPod, err := getTargetPod(config.Namespace, config.PodLabelSelector)
 	if err != nil {
-		// Error logged within getTargetPod
-		log.Printf("Execute request failed for script '%s': Could not get target pod: %v", selectedDefinition.Name, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to find target pod: %v", err)})
+		log.Printf("Execute request failed for script '%s': Could not get target pod: %v. TrackingID: %s", selectedDefinition.Name, err, request.TrackingID)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to find target pod: %v"), "trackingId": request.TrackingID})
 		return
 	}
 
 	// ---> Log: Target pod identified
-	log.Printf("Target pod for script '%s' execution: %s (Namespace: %s, Selector: %s)", selectedDefinition.Name, targetPod, config.Namespace, config.PodLabelSelector)
+	log.Printf("Target pod for script '%s' execution: %s (Namespace: %s, Selector: %s). TrackingID: %s", selectedDefinition.Name, targetPod, config.Namespace, config.PodLabelSelector, request.TrackingID)
 
-	// Prepare environment variables from parameters
+	// Prepare environment variables from taskData
 	envPrefix := ""
-	if len(request.Parameters) > 0 {
+	if len(request.TaskData) > 0 {
 		var envVars []string
-		for key, value := range request.Parameters {
-			if !isValidEnvVarName(key) {
-				log.Printf("Execute request failed for script '%s': Invalid parameter name '%s'", selectedDefinition.Name, key)
-				c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Invalid parameter name (must be alphanumeric + underscore): %s", key)})
+		// Convert taskData map[string]interface{} to map[string]string for env var processing
+		for key, valueInterface := range request.TaskData {
+			// Use key directly (TaskData keys should match parameter names)
+			paramName := key
+			// Convert value to string using fmt.Sprintf for general compatibility
+			// More specific handling might be needed if types are critical (e.g., boolean flags)
+			paramValueStr := fmt.Sprintf("%v", valueInterface)
+
+			// Validate the parameter name (key from taskData) is a safe env var name
+			// We might need a mapping if TaskData keys contain spaces/invalid chars
+			// For now, assume keys are valid env var names or use a sanitized version
+			envVarName := sanitizeEnvVarName(paramName) // Use a helper to sanitize
+			if !isValidEnvVarName(envVarName) {
+				log.Printf("Execute request failed for script '%s': Invalid parameter name '%s' (sanitized: '%s') received in taskData. TrackingID: %s", selectedDefinition.Name, paramName, envVarName, request.TrackingID)
+				c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Invalid parameter name in taskData: %s"), "trackingId": request.TrackingID})
 				return
 			}
-			quotedValue := fmt.Sprintf("%q", value)
-			envVars = append(envVars, fmt.Sprintf("%s=%s", key, quotedValue))
+
+			// Quote the string value for shell safety
+			quotedValue := fmt.Sprintf("%q", paramValueStr)
+			envVars = append(envVars, fmt.Sprintf("%s=%s", envVarName, quotedValue))
 		}
 		envPrefix = strings.Join(envVars, " ") + " "
-		// ---> Log: Prepared environment variables
-		log.Printf("Prepared environment variables for script '%s': %s", selectedDefinition.Name, strings.TrimSpace(envPrefix))
+		log.Printf("Prepared environment variables for script '%s': %s. TrackingID: %s", selectedDefinition.Name, strings.TrimSpace(envPrefix), request.TrackingID)
 	}
 
-	// Construct the command with environment variable prefix
+	// Construct the command
 	fullCommand := envPrefix + selectedDefinition.Command
-
-	// Execute the script's command in the target pod
 	execCmd := fmt.Sprintf("kubectl exec -n %s %s -- /bin/bash -c '%s'",
 		config.Namespace,
 		targetPod,
 		fullCommand,
 	)
-
-	// ---> Log: Constructed kubectl command
-	// Be cautious logging this if 'fullCommand' might contain sensitive parameter values.
-	log.Printf("Constructed kubectl command for script '%s': %s", selectedDefinition.Name, execCmd)
+	log.Printf("Constructed kubectl command for script '%s': %s. TrackingID: %s", selectedDefinition.Name, execCmd, request.TrackingID)
 
 	cmd := exec.Command("sh", "-c", execCmd)
-
-	// ---> Log: Executing command
-	log.Printf("Executing command for script '%s' in pod '%s'...", selectedDefinition.Name, targetPod)
+	log.Printf("Executing command for script '%s' in pod '%s'... TrackingID: %s", selectedDefinition.Name, targetPod, request.TrackingID)
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		// ---> Log: Execution failed (already present, enhanced slightly)
-		log.Printf("Execution FAILED for script '%s' (ID: %s) in pod '%s'. Error: %v. Output: %s", selectedDefinition.Name, selectedDefinition.ID, targetPod, err, string(output))
+		log.Printf("Execution FAILED for script '%s' (ID: %s) in pod '%s'. TrackingID: %s. Error: %v. Output: %s", selectedDefinition.Name, selectedDefinition.ID, targetPod, request.TrackingID, err, string(output))
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"script_name": selectedDefinition.Name,
-			"script_id":   selectedDefinition.ID,
-			"error":       fmt.Sprintf("Script execution failed: %v", err),
-			"output":      string(output),
+			"taskName":   selectedDefinition.Name, // Use taskName for consistency with request
+			"script_id":  selectedDefinition.ID,
+			"trackingId": request.TrackingID,
+			"error":      fmt.Sprintf("Script execution failed: %v", err),
+			"output":     string(output),
 		})
 		return
 	}
 
-	// ---> Log: Execution successful (already present, enhanced slightly)
-	// Consider truncating long output if necessary
-	log.Printf("Execution SUCCESSFUL for script '%s' (ID: %s) in pod '%s'. Output: %s", selectedDefinition.Name, selectedDefinition.ID, targetPod, string(output))
+	log.Printf("Execution SUCCESSFUL for script '%s' (ID: %s) in pod '%s'. TrackingID: %s. Output: %s", selectedDefinition.Name, selectedDefinition.ID, targetPod, request.TrackingID, string(output))
 	c.JSON(http.StatusOK, gin.H{
-		"script_name": selectedDefinition.Name,
-		"script_id":   selectedDefinition.ID,
-		"output":      string(output),
+		"taskName":   selectedDefinition.Name,
+		"script_id":  selectedDefinition.ID,
+		"trackingId": request.TrackingID,
+		"output":     string(output),
 	})
 }
 
@@ -335,6 +350,21 @@ func isValidEnvVarName(name string) bool {
 		}
 	}
 	return true
+}
+
+// sanitizeEnvVarName converts a parameter name into a potentially valid env var name
+// Replaces spaces and invalid characters with underscores.
+// WARNING: This is basic; ensure it doesn't cause collisions and meets shell requirements.
+func sanitizeEnvVarName(name string) string {
+	// Replace common invalid chars with underscore
+	replaced := regexp.MustCompile(`[^a-zA-Z0-9_]+`).ReplaceAllString(name, "_")
+	// Ensure it doesn't start with a number
+	if len(replaced) > 0 && replaced[0] >= '0' && replaced[0] <= '9' {
+		replaced = "_" + replaced
+	}
+	// Optional: Convert to uppercase?
+	// return strings.ToUpper(replaced)
+	return replaced
 }
 
 func main() {
