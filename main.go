@@ -59,7 +59,7 @@ type ScriptResponse struct {
 // TaskServiceRequest defines the structure expected from the calling Task Service
 type TaskServiceRequest struct {
 	TaskName    string                 `json:"taskName"`
-	LastRunTime string                 `json:"lastRunTime"` // Assuming string, adjust if needed
+	LastRunTime int64                  `json:"lastRunTime"` // Changed type to int64 to accept number
 	TrackingID  string                 `json:"trackingId"`
 	TaskData    map[string]interface{} `json:"taskData"` // Use interface{} for flexible value types
 }
