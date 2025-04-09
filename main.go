@@ -206,11 +206,10 @@ func listScripts(c *gin.Context) {
 	c.Data(http.StatusOK, "application/json", jsonData)
 }
 
-// executeScript handles the /v1/execute endpoint, expecting TaskServiceRequest payload.
+// executeScript handles the /v1/execute endpoint, adapting to TaskService payload.
 func executeScript(c *gin.Context) {
 	config := loadConfig()
 
-	// Bind the request body to the TaskServiceRequest struct
 	var request TaskServiceRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
 		log.Printf("Failed to bind JSON payload: %v", err)
@@ -219,14 +218,25 @@ func executeScript(c *gin.Context) {
 	}
 
 	// ---> Log: Received execution request
-	log.Printf("Received execute request via Task Service - TaskName: '%s', TrackingID: %s, TaskData: %v", request.TaskName, request.TrackingID, request.TaskData)
+	log.Printf("Received execute request via Task Service - TaskName(Instance): '%s', TrackingID: %s, TaskData: %v", request.TaskName, request.TrackingID, request.TaskData)
 
-	// --- Input Validation ---
-	if request.TaskName == "" {
-		log.Printf("Execute request failed: taskName field is missing or empty.")
-		c.JSON(http.StatusBadRequest, gin.H{"error": "taskName field is required"})
+	// --- Extract Actual Script Name from TaskData ---
+	scriptNameInterface, nameOk := request.TaskData["name"]
+	if !nameOk {
+		log.Printf("Execute request failed: taskData is missing the 'name' field. TrackingID: %s", request.TrackingID)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "taskData must contain a 'name' field specifying the script to run", "trackingId": request.TrackingID})
 		return
 	}
+	actualScriptName, nameIsString := scriptNameInterface.(string)
+	if !nameIsString || actualScriptName == "" {
+		log.Printf("Execute request failed: taskData 'name' field is not a non-empty string ('%v'). TrackingID: %s", scriptNameInterface, request.TrackingID)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "taskData 'name' field must be a non-empty string", "trackingId": request.TrackingID})
+		return
+	}
+
+	// ---> Log: Extracted script name
+	log.Printf("Extracted actual script name '%s' from taskData. TrackingID: %s", actualScriptName, request.TrackingID)
+
 	// Add validation for TrackingID if needed
 
 	// Load script definitions
@@ -242,18 +252,19 @@ func executeScript(c *gin.Context) {
 		return
 	}
 
-	// Find the requested script definition by TaskName (matching ScriptDefinition.Name)
+	// Find the requested script definition by the *actual* script name from taskData
 	var selectedDefinition *ScriptDefinition
 	for i := range definitions {
-		if definitions[i].Name == request.TaskName {
+		// Match against the name extracted from taskData.name
+		if definitions[i].Name == actualScriptName {
 			selectedDefinition = &definitions[i]
 			break
 		}
 	}
 
 	if selectedDefinition == nil {
-		log.Printf("Execute request failed: Script with name '%s' not found in definitions. TrackingID: %s", request.TaskName, request.TrackingID)
-		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("Script '%s' not found"), "trackingId": request.TrackingID})
+		log.Printf("Execute request failed: Script with name '%s' (from taskData) not found in definitions. TrackingID: %s", actualScriptName, request.TrackingID)
+		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("Script '%s' not found", actualScriptName), "trackingId": request.TrackingID})
 		return
 	}
 
@@ -264,32 +275,44 @@ func executeScript(c *gin.Context) {
 	targetPod, err := getTargetPod(config.Namespace, config.PodLabelSelector)
 	if err != nil {
 		log.Printf("Execute request failed for script '%s': Could not get target pod: %v. TrackingID: %s", selectedDefinition.Name, err, request.TrackingID)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to find target pod: %v"), "trackingId": request.TrackingID})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to find target pod: %v", err), "trackingId": request.TrackingID})
 		return
 	}
 
 	// ---> Log: Target pod identified
 	log.Printf("Target pod for script '%s' execution: %s (Namespace: %s, Selector: %s). TrackingID: %s", selectedDefinition.Name, targetPod, config.Namespace, config.PodLabelSelector, request.TrackingID)
 
-	// Prepare environment variables from taskData
+	// Prepare environment variables by extracting values from taskData based on script's AcceptedParameters
 	envPrefix := ""
-	if len(request.TaskData) > 0 {
+	if len(selectedDefinition.AcceptedParameters) > 0 {
 		var envVars []string
-		// Convert taskData map[string]interface{} to map[string]string for env var processing
-		for key, valueInterface := range request.TaskData {
-			// Use key directly (TaskData keys should match parameter names)
-			paramName := key
-			// Convert value to string using fmt.Sprintf for general compatibility
-			// More specific handling might be needed if types are critical (e.g., boolean flags)
-			paramValueStr := fmt.Sprintf("%v", valueInterface)
+		log.Printf("Processing %d accepted parameters for script '%s'. TrackingID: %s", len(selectedDefinition.AcceptedParameters), selectedDefinition.Name, request.TrackingID)
 
-			// Validate the parameter name (key from taskData) is a safe env var name
-			// We might need a mapping if TaskData keys contain spaces/invalid chars
-			// For now, assume keys are valid env var names or use a sanitized version
-			envVarName := sanitizeEnvVarName(paramName) // Use a helper to sanitize
+		for _, paramDef := range selectedDefinition.AcceptedParameters {
+			paramValueInterface, valueOk := request.TaskData[paramDef.Name] // Look for key matching paramDef.Name in taskData
+
+			if !valueOk {
+				// Handle missing parameter value - check if it was optional in definition
+				if !paramDef.Optional {
+					log.Printf("Execute request failed for script '%s': Required parameter '%s' missing in taskData. TrackingID: %s", selectedDefinition.Name, paramDef.Name, request.TrackingID)
+					c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Required parameter '%s' is missing in taskData", paramDef.Name), "trackingId": request.TrackingID})
+					return
+				} else {
+					// Optional parameter is missing, skip setting env var for it
+					log.Printf("Optional parameter '%s' for script '%s' missing in taskData, skipping. TrackingID: %s", paramDef.Name, selectedDefinition.Name, request.TrackingID)
+					continue
+				}
+			}
+
+			// Convert value to string
+			paramValueStr := fmt.Sprintf("%v", paramValueInterface)
+
+			// Sanitize the DEFINED parameter name for use as an env var key
+			envVarName := sanitizeEnvVarName(paramDef.Name)
 			if !isValidEnvVarName(envVarName) {
-				log.Printf("Execute request failed for script '%s': Invalid parameter name '%s' (sanitized: '%s') received in taskData. TrackingID: %s", selectedDefinition.Name, paramName, envVarName, request.TrackingID)
-				c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Invalid parameter name in taskData: %s"), "trackingId": request.TrackingID})
+				// This should ideally not happen if sanitizeEnvVarName is robust
+				log.Printf("Internal Error for script '%s': Sanitized parameter name '%s' (from '%s') is invalid. TrackingID: %s", selectedDefinition.Name, envVarName, paramDef.Name, request.TrackingID)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error processing parameter names", "trackingId": request.TrackingID})
 				return
 			}
 
@@ -297,8 +320,11 @@ func executeScript(c *gin.Context) {
 			quotedValue := fmt.Sprintf("%q", paramValueStr)
 			envVars = append(envVars, fmt.Sprintf("%s=%s", envVarName, quotedValue))
 		}
-		envPrefix = strings.Join(envVars, " ") + " "
-		log.Printf("Prepared environment variables for script '%s': %s. TrackingID: %s", selectedDefinition.Name, strings.TrimSpace(envPrefix), request.TrackingID)
+
+		if len(envVars) > 0 {
+			envPrefix = strings.Join(envVars, " ") + " "
+			log.Printf("Prepared environment variables for script '%s': %s. TrackingID: %s", selectedDefinition.Name, strings.TrimSpace(envPrefix), request.TrackingID)
+		}
 	}
 
 	// Construct the command
@@ -317,7 +343,7 @@ func executeScript(c *gin.Context) {
 	if err != nil {
 		log.Printf("Execution FAILED for script '%s' (ID: %s) in pod '%s'. TrackingID: %s. Error: %v. Output: %s", selectedDefinition.Name, selectedDefinition.ID, targetPod, request.TrackingID, err, string(output))
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"taskName":   selectedDefinition.Name, // Use taskName for consistency with request
+			"taskName":   actualScriptName, // Return the actual script name
 			"script_id":  selectedDefinition.ID,
 			"trackingId": request.TrackingID,
 			"error":      fmt.Sprintf("Script execution failed: %v", err),
@@ -328,7 +354,7 @@ func executeScript(c *gin.Context) {
 
 	log.Printf("Execution SUCCESSFUL for script '%s' (ID: %s) in pod '%s'. TrackingID: %s. Output: %s", selectedDefinition.Name, selectedDefinition.ID, targetPod, request.TrackingID, string(output))
 	c.JSON(http.StatusOK, gin.H{
-		"taskName":   selectedDefinition.Name,
+		"taskName":   actualScriptName, // Return the actual script name
 		"script_id":  selectedDefinition.ID,
 		"trackingId": request.TrackingID,
 		"output":     string(output),
