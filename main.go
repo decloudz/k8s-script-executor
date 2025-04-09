@@ -131,7 +131,7 @@ func getTargetPod(namespace, labelSelector string) (string, error) {
 }
 
 // listScripts handles the /v1/options endpoint.
-// It loads the script definitions and returns only the parameter-related fields.
+// It loads the script definitions, formats them as ParameterView, and returns raw JSON.
 func listScripts(c *gin.Context) {
 	config := loadConfig()
 
@@ -139,13 +139,13 @@ func listScripts(c *gin.Context) {
 	if err != nil {
 		log.Printf("Error loading script definitions: %v", err)
 		statusCode := http.StatusInternalServerError
-		// Optionally set 404 if file not found, but 500 is generally okay for server config issues
 		if os.IsNotExist(err) {
-			// statusCode = http.StatusNotFound // Keep as 500 for now, simpler
 			log.Printf("Script definitions file not found at %s", config.ScriptsPath)
 		}
-		// Return an empty array on error, but set the correct HTTP status code
-		c.JSON(statusCode, []ParameterView{}) // Return [] instead of {"error": ...}
+
+		// On error, return status code and an empty JSON array body "[]"
+		c.Header("Content-Type", "application/json; charset=utf-8")
+		c.String(statusCode, "[]") // Send raw string "[]"
 		return
 	}
 
@@ -163,7 +163,20 @@ func listScripts(c *gin.Context) {
 		}
 	}
 
-	c.JSON(http.StatusOK, parameterViews)
+	// Manually marshal the data to JSON bytes
+	jsonData, err := json.Marshal(parameterViews)
+	if err != nil {
+		// This error should be rare if the structs are well-defined
+		log.Printf("Error marshaling parameter views to JSON: %v", err)
+		// Return status code and an empty JSON array body "[]"
+		c.Header("Content-Type", "application/json; charset=utf-8")
+		c.String(http.StatusInternalServerError, "[]")
+		return
+	}
+
+	// Set Content-Type and write raw JSON bytes using c.Data
+	c.Header("Content-Type", "application/json; charset=utf-8")
+	c.Data(http.StatusOK, "application/json", jsonData)
 }
 
 // executeScript handles the /v1/execute endpoint.
