@@ -12,7 +12,8 @@ data:
         "label": "Show Current Directory",
         "type": "string",
         "optional": true,
-        "command": "pwd"
+        "command": "pwd",
+        "acceptedParameters": []
       },
       {
         "id": "list-home",
@@ -23,6 +24,63 @@ data:
         "options": [
           {"id": "opt1", "name": "Option 1 Name"},
           {"id": "opt2", "name": "Option 2 Name"}
+        ],
+        "acceptedParameters": []
+      },
+      {
+        "id": "sleep-seconds",
+        "name": "Sleep X seconds",
+        "command": "echo Sleeping for $SECONDS seconds... && sleep $SECONDS && echo Done sleeping.",
+        "acceptedParameters": [
+          {
+            "name": "seconds",
+            "type": "number",
+            "description": "Number of seconds to sleep",
+            "optional": false
+          }
+        ]
+      },
+      {
+        "id": "consolidate-prices",
+        "name": "Consolidate Prices (NEW SCOPE)",
+        "command": "echo Consolidating $Timeseries_Store $Model_Name $Saved_Search $Date_Range $Start_Day_Offset $Classic_PC_Options",
+        "acceptedParameters": [
+          {
+            "name": "Timeseries Store",
+            "type": "string",
+            "description": "Name of the Timeseries Store ID.",
+            "optional": false
+          },
+          {
+            "name": "Model Name",
+            "type": "string",
+            "description": "Name of the Data Model to use.",
+            "optional": false
+          },
+          {
+            "name": "Saved Search",
+            "type": "dataset_id",
+            "description": "Specifies objects to consolidate.",
+            "optional": false
+          },
+          {
+            "name": "Date Range",
+            "type": "string",
+            "description": "A date range to consolidate prices within, format: 'yyyymmdd;yyyymmdd'",
+            "optional": true
+          },
+          {
+            "name": "Start Day Offset",
+            "type": "number",
+            "description": "Offset in number of days from the current day to use as the start date. For example: 0 (default) is today, 1 is yesterday.",
+            "optional": true
+          },
+          {
+            "name": "Classic PC Options",
+            "type": "string",
+            "description": "Options for update_prices.sh",
+            "optional": true
+          }
         ]
       }
     ]

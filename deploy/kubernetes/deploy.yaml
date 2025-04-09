@@ -16,7 +16,7 @@ spec:
         - name: ghcr-repo-login-secret
       containers:
       - name: server
-        image: ghcr.io/decloudz/k8s-script-executor:sha-18f0b76
+        image: ghcr.io/decloudz/k8s-script-executor:sha-cd3cec4
         ports:
         - containerPort: 8080
         env:

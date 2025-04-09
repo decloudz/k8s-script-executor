@@ -13,36 +13,46 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// ParameterOption defines the structure for options within a script definition
+// ParameterOption defines the structure for options within a script's *top-level* parameter definition
+// (Used if the script itself is presented like a parameter with predefined choices, like in the previous Go structure)
+// This might become less relevant with the new response structure but keep for loading compatibility for now.
 type ParameterOption struct {
 	Name string `json:"name"` // Required
 	ID   string `json:"id"`   // Required
 }
 
-// ScriptDefinition holds the combined parameter options and command execution details
-type ScriptDefinition struct {
-	// Fields for /v1/options endpoint
-	ID          string            `json:"id"`   // Required
-	Name        string            `json:"name"` // Required
-	Description string            `json:"description,omitempty"`
-	Label       string            `json:"label,omitempty"`
-	Type        string            `json:"type,omitempty"` // Defaults to "string"
-	Optional    bool              `json:"optional,omitempty"`
-	Options     []ParameterOption `json:"options,omitempty"`
-
-	// Field for /v1/execute endpoint
-	Command string `json:"command"` // Required
+// InputParameterDef defines the structure for parameters accepted *by* a script
+// Used in the nested "parameters" array in the new desired response structure
+type InputParameterDef struct {
+	Name        string `json:"name"`           // Required
+	Type        string `json:"type,omitempty"` // Required (Defaults to string if omitted? TBC)
+	Description string `json:"description,omitempty"`
+	Optional    bool   `json:"optional,omitempty"`
+	// Add other fields seen in Java example if needed (e.g., dataset_id?)
 }
 
-// ParameterView is the structure returned by the /v1/options endpoint
-type ParameterView struct {
-	ID          string            `json:"id"`
-	Name        string            `json:"name"`
+// ScriptDefinition holds the combined definition loaded from scripts.json
+type ScriptDefinition struct {
+	// Fields for identifying the script and its command
+	ID      string `json:"id"`      // Required
+	Name    string `json:"name"`    // Required (This will be the top-level "name" in the response)
+	Command string `json:"command"` // Required
+
+	// Input parameters the script accepts (new field)
+	AcceptedParameters []InputParameterDef `json:"acceptedParameters,omitempty"`
+
+	// Optional descriptive fields (Not directly used in new response structure but maybe useful internally)
 	Description string            `json:"description,omitempty"`
 	Label       string            `json:"label,omitempty"`
-	Type        string            `json:"type,omitempty"`
-	Optional    bool              `json:"optional,omitempty"`
-	Options     []ParameterOption `json:"options,omitempty"`
+	Type        string            `json:"type,omitempty"`     // Top-level type if script itself is treated like a parameter
+	Optional    bool              `json:"optional,omitempty"` // Top-level optional flag
+	Options     []ParameterOption `json:"options,omitempty"`  // Top-level options
+}
+
+// ScriptResponse is the structure returned by the /v1/options endpoint (matching Java example)
+type ScriptResponse struct {
+	Name       string              `json:"name"`
+	Parameters []InputParameterDef `json:"parameters"`
 }
 
 // Config holds application configuration
@@ -82,8 +92,9 @@ func loadScriptDefinitions(filePath string) ([]ScriptDefinition, error) {
 		return nil, fmt.Errorf("failed to parse script definitions JSON from '%s': %v", filePath, err)
 	}
 
-	// Validate definitions and set defaults
+	// Validate definitions
 	for i := range definitions {
+		// Validate top-level required fields
 		if definitions[i].ID == "" {
 			return nil, fmt.Errorf("script definition %d in '%s' is missing required 'id' field", i, filePath)
 		}
@@ -93,17 +104,27 @@ func loadScriptDefinitions(filePath string) ([]ScriptDefinition, error) {
 		if definitions[i].Command == "" {
 			return nil, fmt.Errorf("script definition %d (id: %s) in '%s' is missing required 'command' field", i, definitions[i].ID, filePath)
 		}
-		if definitions[i].Type == "" {
-			definitions[i].Type = "string" // Set default type
+
+		// Validate nested AcceptedParameters
+		for j, param := range definitions[i].AcceptedParameters {
+			if param.Name == "" {
+				return nil, fmt.Errorf("input parameter %d for script '%s' in '%s' is missing required 'name' field", j, definitions[i].ID, filePath)
+			}
+			// Optional: Validate or default param.Type if needed
+			if param.Type == "" {
+				// Decide: either error out or default it
+				definitions[i].AcceptedParameters[j].Type = "string" // Example: Defaulting to string
+				// return nil, fmt.Errorf("input parameter '%s' for script '%s' in '%s' is missing required 'type' field", param.Name, definitions[i].ID, filePath)
+			}
 		}
 
-		// Validate options within definitions
+		// Retain validation for top-level options if they are still used/defined
 		for j, option := range definitions[i].Options {
 			if option.ID == "" {
-				return nil, fmt.Errorf("option %d for script definition '%s' in '%s' is missing required 'id' field", j, definitions[i].ID, filePath)
+				return nil, fmt.Errorf("top-level option %d for script definition '%s' in '%s' is missing required 'id' field", j, definitions[i].ID, filePath)
 			}
 			if option.Name == "" {
-				return nil, fmt.Errorf("option %d (id: %s) for script definition '%s' in '%s' is missing required 'name' field", j, option.ID, definitions[i].ID, filePath)
+				return nil, fmt.Errorf("top-level option %d (id: %s) for script definition '%s' in '%s' is missing required 'name' field", j, option.ID, definitions[i].ID, filePath)
 			}
 		}
 	}
@@ -131,7 +152,7 @@ func getTargetPod(namespace, labelSelector string) (string, error) {
 }
 
 // listScripts handles the /v1/options endpoint.
-// It loads the script definitions, formats them as ParameterView, and returns raw JSON.
+// It loads script definitions and returns them in the Java service's format.
 func listScripts(c *gin.Context) {
 	config := loadConfig()
 
@@ -142,39 +163,36 @@ func listScripts(c *gin.Context) {
 		if os.IsNotExist(err) {
 			log.Printf("Script definitions file not found at %s", config.ScriptsPath)
 		}
-
 		// On error, return status code and an empty JSON array body "[]"
 		c.Header("Content-Type", "application/json; charset=utf-8")
-		c.String(statusCode, "[]") // Send raw string "[]"
+		c.String(statusCode, "[]")
 		return
 	}
 
-	// Create the view model, excluding the 'command' field
-	parameterViews := make([]ParameterView, len(definitions))
+	// Create the response structure matching the Java service
+	scriptResponses := make([]ScriptResponse, len(definitions))
 	for i, def := range definitions {
-		parameterViews[i] = ParameterView{
-			ID:          def.ID,
-			Name:        def.Name,
-			Description: def.Description,
-			Label:       def.Label,
-			Type:        def.Type,
-			Optional:    def.Optional,
-			Options:     def.Options,
+		// Ensure Parameters is not nil if AcceptedParameters is empty
+		params := def.AcceptedParameters
+		if params == nil {
+			params = []InputParameterDef{} // Return empty array instead of null
+		}
+		scriptResponses[i] = ScriptResponse{
+			Name:       def.Name,
+			Parameters: params,
 		}
 	}
 
-	// Manually marshal the data to JSON bytes
-	jsonData, err := json.Marshal(parameterViews)
+	// Manually marshal the new response structure to JSON bytes
+	jsonData, err := json.Marshal(scriptResponses)
 	if err != nil {
-		// This error should be rare if the structs are well-defined
-		log.Printf("Error marshaling parameter views to JSON: %v", err)
-		// Return status code and an empty JSON array body "[]"
+		log.Printf("Error marshaling script responses to JSON: %v", err)
 		c.Header("Content-Type", "application/json; charset=utf-8")
 		c.String(http.StatusInternalServerError, "[]")
 		return
 	}
 
-	// Set Content-Type and write raw JSON bytes using c.Data
+	// Set Content-Type and write raw JSON bytes
 	c.Header("Content-Type", "application/json; charset=utf-8")
 	c.Data(http.StatusOK, "application/json", jsonData)
 }
