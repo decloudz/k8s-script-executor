@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -12,6 +13,12 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+
+	// Kubernetes imports
+	authv1 "k8s.io/api/authorization/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 )
 
 // ParameterOption defines the structure for options within a script's *top-level* parameter definition
@@ -393,6 +400,55 @@ func sanitizeEnvVarName(name string) string {
 	return replaced
 }
 
+// checkPermissions verifies if the service account has the required RBAC permissions.
+func checkPermissions(clientset *kubernetes.Clientset, namespace string) error {
+	log.Printf("Checking required Kubernetes permissions in namespace '%s'...", namespace)
+
+	requiredPermissions := []struct {
+		verb        string
+		resource    string
+		subresource string
+		description string
+	}{
+		{"get", "pods", "", "Get Pods"},
+		{"create", "pods", "exec", "Create Pods/Exec"},
+	}
+
+	for _, perm := range requiredPermissions {
+		ssar := &authv1.SelfSubjectAccessReview{
+			Spec: authv1.SelfSubjectAccessReviewSpec{
+				ResourceAttributes: &authv1.ResourceAttributes{
+					Namespace:   namespace,
+					Verb:        perm.verb,
+					Resource:    perm.resource,
+					Subresource: perm.subresource,
+				},
+			},
+		}
+
+		result, err := clientset.AuthorizationV1().SelfSubjectAccessReviews().Create(context.TODO(), ssar, metav1.CreateOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to perform self subject access review for %s: %v", perm.description, err)
+		}
+
+		if !result.Status.Allowed {
+			log.Printf("Permission check FAILED: '%s' permission is DENIED. Reason: %s", perm.description, result.Status.Reason)
+			return fmt.Errorf("missing required Kubernetes permission: %s in namespace %s. Reason: %s", perm.description, namespace, result.Status.Reason)
+		} else {
+			log.Printf("Permission check PASSED: '%s' permission is allowed.", perm.description)
+		}
+	}
+
+	log.Printf("All required Kubernetes permissions verified successfully in namespace '%s'.", namespace)
+	return nil
+}
+
+// healthzHandler handles the /healthz endpoint.
+func healthzHandler(c *gin.Context) {
+	// Simple health check - relies on the startup permission check having passed.
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
+
 func main() {
 	config := loadConfig()
 	log.Printf("Starting server with configuration:")
@@ -400,11 +456,31 @@ func main() {
 	log.Printf("- Pod Label Selector: %s", config.PodLabelSelector)
 	log.Printf("- Namespace: %s", config.Namespace)
 
+	// --- Kubernetes Client Setup ---
+	log.Println("Initializing Kubernetes client...")
+	k8sConfig, err := rest.InClusterConfig()
+	if err != nil {
+		log.Fatalf("Failed to get in-cluster Kubernetes config: %v", err)
+	}
+	clientset, err := kubernetes.NewForConfig(k8sConfig)
+	if err != nil {
+		log.Fatalf("Failed to create Kubernetes clientset: %v", err)
+	}
+	log.Println("Kubernetes client initialized successfully.")
+
+	// --- Startup Permission Check ---
+	if err := checkPermissions(clientset, config.Namespace); err != nil {
+		// Log fatal will exit the program
+		log.Fatalf("Startup failed due to missing permissions: %v", err)
+	}
+
+	// --- Gin Router Setup ---
 	r := gin.Default()
 
 	// Define API routes
-	r.GET("/v1/options", listScripts) // Serves parameter view
+	r.GET("/v1/options", listScripts)
 	r.POST("/v1/execute", executeScript)
+	r.GET("/healthz", healthzHandler) // Add health check endpoint
 
 	// Start server on port 8080
 	port := "8080"

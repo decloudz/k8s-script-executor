@@ -41,8 +41,8 @@ jobs:
           tags: |
             # tag event
             type=ref,event=tag
-            # push event to main branch
-            type=branch,event=push,branch=main,prefix=main-
+            # push event to main branch (Handled by 'latest' tag below)
+            # type=branch,event=push,branch=main,prefix=main-
             # Add sha tag for all pushes for uniqueness
             type=sha,prefix=sha-
             # Add 'latest' tag for main branch pushes
