@@ -29,7 +29,7 @@ spec:
         - name: POD_LABEL_SELECTOR
           value: "app=prime-query-server"
         - name: PROCESS_TRACKING_SERVICE_URL
-          value: "http://prime-edm-ops360-process-tracking.prime-edm.svc.cluster.local:8080/process-tracking"
+          value: "https://prime-edm.apps.rosa.pcs.iej5.p3.openshiftapps.com/process-tracking/api/v1/process"
         - name: PROCESS_TRACKING_STAGE
           value: "ENRICHMENT"
         - name: PROCESS_TRACKING_GROUP

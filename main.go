@@ -320,7 +320,7 @@ func executeScript(c *gin.Context) {
 	defer func() {
 		// This runs when executeScript function exits (normally or via return)
 		log.Printf("Sending final status '%s' for ProcessID %s", finalStatus, processID)
-		go notifyProcessTracking(config, ProcessTrackingPayload{
+		notifyProcessTracking(config, ProcessTrackingPayload{
 			ProcessID: processID,
 			Name:      actualScriptName,
 			Stage:     config.ProcessTrackingStage,
