@@ -331,18 +331,10 @@ func notifyProcessTrackingUpdate(config *Config, trackingID string, payload Proc
 // executeScript handles the /v1/execute endpoint, integrating Process Tracking.
 func executeScript(c *gin.Context) {
 	config := loadConfig()
-
 	var request TaskServiceRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
 		log.Printf("Failed to bind JSON payload: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request payload format"})
-		return
-	}
-
-	// Add validation for TrackingID early
-	if request.TrackingID == "" {
-		log.Printf("Execute request failed: trackingId field is missing or empty in the request payload.")
-		c.JSON(http.StatusBadRequest, gin.H{"error": "trackingId field is required"})
 		return
 	}
 
