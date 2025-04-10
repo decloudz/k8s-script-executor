@@ -80,20 +80,19 @@ type TaskServiceRequest struct {
 }
 
 // ProcessTrackingCreatePayload sent to initially create a process tracking record
+// Uses a locally generated timestamp ID.
 type ProcessTrackingCreatePayload struct {
-	Name       string `json:"name"` // Script Name
+	ProcessID  int64  `json:"processId"` // Timestamp ID
+	Name       string `json:"name"`      // Script Name
 	Stage      string `json:"stage"`
 	Group      string `json:"group"`
 	Label      string `json:"label,omitempty"`
 	TrackingID string `json:"trackingId,omitempty"` // Include Task Service Tracking ID for correlation
-	// Status: "PROGRESS" // Status is implicitly set on creation by PT service?
+	Status     string `json:"status"`               // Set to PROGRESS
 }
 
-// ProcessTrackingCreateResponse expected from the tracking service after creation
-type ProcessTrackingCreateResponse struct {
-	ProcessID int64 `json:"processId"`
-	// Include other fields if needed
-}
+// ProcessTrackingCreateResponse - Not needed as we generate ID locally
+// type ProcessTrackingCreateResponse struct { ... }
 
 // ProcessTrackingUpdatePayload sent to update an existing process tracking record
 type ProcessTrackingUpdatePayload struct {
@@ -259,57 +258,44 @@ func listScripts(c *gin.Context) {
 // --- Process Tracking Helpers ---
 var httpClient = &http.Client{Timeout: 10 * time.Second}
 
-// notifyProcessTrackingCreate sends the initial creation request and returns the generated numeric ProcessID
-func notifyProcessTrackingCreate(config *Config, payload ProcessTrackingCreatePayload) (int64, error) {
+// notifyProcessTrackingCreate sends the initial PROGRESS notification asynchronously
+func notifyProcessTrackingCreate(config *Config, payload ProcessTrackingCreatePayload) /* removed error return */ {
 	if config.ProcessTrackingURL == "" {
-		log.Printf("[ProcessTracking CREATE] Skipping notification for TrackingID %s: PROCESS_TRACKING_SERVICE_URL not set.", payload.TrackingID)
-		return 0, nil // Return 0 ID and no error if skipping
+		log.Printf("[ProcessTracking CREATE] Skipping notification for ProcessID %d: PROCESS_TRACKING_SERVICE_URL not set.", payload.ProcessID)
+		return // Not an error if skipping
 	}
+
+	// Set status to PROGRESS for creation
+	payload.Status = "PROGRESS"
 
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
-		log.Printf("[ProcessTracking CREATE] Error marshaling payload for TrackingID %s: %v", payload.TrackingID, err)
-		return 0, fmt.Errorf("failed to marshal create payload: %w", err)
+		log.Printf("[ProcessTracking CREATE] Error marshaling payload for ProcessID %d: %v", payload.ProcessID, err)
+		return // Cannot proceed
 	}
 
 	req, err := http.NewRequest("POST", config.ProcessTrackingURL, bytes.NewBuffer(payloadBytes)) // Use base URL
 	if err != nil {
-		log.Printf("[ProcessTracking CREATE] Error creating request for TrackingID %s: %v", payload.TrackingID, err)
-		return 0, fmt.Errorf("failed to create request: %w", err)
+		log.Printf("[ProcessTracking CREATE] Error creating request for ProcessID %d: %v", payload.ProcessID, err)
+		return
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	log.Printf("[ProcessTracking CREATE] Sending creation request for Name: %s, TrackingID: %s", payload.Name, payload.TrackingID)
+	log.Printf("[ProcessTracking CREATE] Sending creation/progress request for Name: %s, ProcessID: %d, TrackingID: %s", payload.Name, payload.ProcessID, payload.TrackingID)
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		log.Printf("[ProcessTracking CREATE] Error sending notification for TrackingID %s: %v", payload.TrackingID, err)
-		return 0, fmt.Errorf("failed to send create request: %w", err)
+		// Log error but don't block main execution as this runs async
+		log.Printf("[ProcessTracking CREATE] Error sending notification for ProcessID %d: %v", payload.ProcessID, err)
+		return
 	}
 	defer resp.Body.Close()
 
-	bodyBytes, readErr := ioutil.ReadAll(resp.Body) // Read body regardless of status
-	if readErr != nil {
-		log.Printf("[ProcessTracking CREATE] Failed to read response body for TrackingID %s after status %d: %v", payload.TrackingID, resp.StatusCode, readErr)
-		// Return error even if status was 2xx because we need the ID
-		return 0, fmt.Errorf("failed to read create response body: %w", readErr)
-	}
-
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		log.Printf("[ProcessTracking CREATE] Notification failed for TrackingID %s: Status %d, Body: %s", payload.TrackingID, resp.StatusCode, string(bodyBytes))
-		return 0, fmt.Errorf("create request failed with status %d", resp.StatusCode)
+		bodyBytes, _ := ioutil.ReadAll(resp.Body) // Read body for logging context
+		log.Printf("[ProcessTracking CREATE] Notification failed for ProcessID %d: Status %d, Body: %s", payload.ProcessID, resp.StatusCode, string(bodyBytes))
 	} else {
-		// Attempt to parse the response to get the numeric ID
-		var createResp ProcessTrackingCreateResponse
-		if err := json.Unmarshal(bodyBytes, &createResp); err != nil {
-			log.Printf("[ProcessTracking CREATE] Failed to unmarshal success response body for TrackingID %s: %v. Body: %s", payload.TrackingID, err, string(bodyBytes))
-			return 0, fmt.Errorf("failed to parse create response: %w", err)
-		}
-		if createResp.ProcessID == 0 {
-			log.Printf("[ProcessTracking CREATE] Got success status but processId was 0 or missing in response for TrackingID %s. Body: %s", payload.TrackingID, string(bodyBytes))
-			return 0, fmt.Errorf("processId missing or zero in create response")
-		}
-		log.Printf("[ProcessTracking CREATE] Notification successful for TrackingID %s. Received ProcessID: %d", payload.TrackingID, createResp.ProcessID)
-		return createResp.ProcessID, nil // Return the numeric ID
+		log.Printf("[ProcessTracking CREATE] Notification successful for ProcessID %d (Status: %s)", payload.ProcessID, payload.Status)
+		// Don't need to parse body
 	}
 }
 
@@ -381,24 +367,19 @@ func executeScript(c *gin.Context) {
 	}
 
 	// --- Process Tracking Start ---
-	// Create the initial process record SYNCHRONOUSLY to get the numeric ID
-	numericProcessID, createErr := notifyProcessTrackingCreate(config, ProcessTrackingCreatePayload{
+	// Generate timestamp-based Process ID
+	numericProcessID := time.Now().UnixMilli()
+	log.Printf("Generated numeric ProcessID: %d for script '%s', TrackingID: %s", numericProcessID, actualScriptName, request.TrackingID)
+
+	// Send initial PROGRESS notification asynchronously
+	go notifyProcessTrackingCreate(config, ProcessTrackingCreatePayload{
+		ProcessID:  numericProcessID, // Pass generated timestamp ID
 		Name:       actualScriptName,
 		Stage:      config.ProcessTrackingStage,
 		Group:      config.ProcessTrackingGroup,
 		Label:      actualScriptName,
 		TrackingID: request.TrackingID, // Pass Task Service TrackingID for correlation
 	})
-
-	if createErr != nil {
-		// Log the creation error. Decide if we should stop execution.
-		// For now, we log and continue, but updates will likely fail due to numericProcessID being 0.
-		log.Printf("ERROR: Failed to create initial process tracking record for script '%s': %v. TrackingID: %s. Execution will continue, but status updates may fail.", actualScriptName, createErr, request.TrackingID)
-		// Optionally: Fail fast
-		// notifyProcessTrackingUpdate(config, 0, ProcessTrackingUpdatePayload{Status: "FAILED", Message: fmt.Sprintf("Failed to create tracking record: %v", createErr)}) // Won't work if ID is 0
-		// c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to initialize process tracking", "trackingId": request.TrackingID})
-		// return
-	}
 
 	// --- Resume normal execution flow ---
 	log.Printf("Extracted actual script name '%s' from taskData. TrackingID: %s", actualScriptName, request.TrackingID)
@@ -414,7 +395,10 @@ func executeScript(c *gin.Context) {
 		}
 		// Send FAILED status UPDATE using numeric ID
 		notifyProcessTrackingUpdate(config, numericProcessID, ProcessTrackingUpdatePayload{Status: "FAILED", Message: errMsgStr})
-		c.JSON(statusCode, gin.H{"error": errMsgStr, "trackingId": request.TrackingID, "processId": numericProcessID}) // Include ProcessID in response
+		// Return JSON error body WITHOUT trackingId and processId
+		c.JSON(statusCode, gin.H{
+			"error": errMsgStr,
+		})
 		return
 	}
 
@@ -432,7 +416,10 @@ func executeScript(c *gin.Context) {
 		log.Printf("Execute request failed: Script with name '%s' (from taskData) not found in definitions. TrackingID: %s", actualScriptName, request.TrackingID)
 		// Send FAILED status UPDATE using numeric ID
 		notifyProcessTrackingUpdate(config, numericProcessID, ProcessTrackingUpdatePayload{Status: "FAILED", Message: fmt.Sprintf("Script '%s' not found", actualScriptName)})
-		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("Script '%s' not found", actualScriptName), "trackingId": request.TrackingID, "processId": numericProcessID})
+		// Return JSON error body WITHOUT trackingId and processId
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": fmt.Sprintf("Script '%s' not found", actualScriptName),
+		})
 		return
 	}
 
@@ -444,7 +431,10 @@ func executeScript(c *gin.Context) {
 		log.Printf("Execute request failed for script '%s': Could not get target pod: %v. TrackingID: %s", selectedDefinition.Name, err, request.TrackingID)
 		// Send FAILED status UPDATE using numeric ID
 		notifyProcessTrackingUpdate(config, numericProcessID, ProcessTrackingUpdatePayload{Status: "FAILED", Message: fmt.Sprintf("Failed to find target pod: %v", err)})
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to find target pod: %v", err), "trackingId": request.TrackingID, "processId": numericProcessID})
+		// Return JSON error body WITHOUT trackingId and processId
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": fmt.Sprintf("Failed to find target pod: %v", err),
+		})
 		return
 	}
 
@@ -465,7 +455,10 @@ func executeScript(c *gin.Context) {
 					log.Printf("Execute request failed for script '%s': Required parameter '%s' missing in taskData. TrackingID: %s", selectedDefinition.Name, paramDef.Name, request.TrackingID)
 					// Send FAILED status UPDATE using numeric ID
 					notifyProcessTrackingUpdate(config, numericProcessID, ProcessTrackingUpdatePayload{Status: "FAILED", Message: fmt.Sprintf("Required parameter '%s' missing", paramDef.Name)})
-					c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Required parameter '%s' is missing in taskData", paramDef.Name), "trackingId": request.TrackingID, "processId": numericProcessID})
+					// Return JSON error body WITHOUT trackingId and processId
+					c.JSON(http.StatusBadRequest, gin.H{
+						"error": fmt.Sprintf("Required parameter '%s' is missing in taskData", paramDef.Name),
+					})
 					return
 				} else {
 					// Optional parameter is missing, skip setting env var for it
@@ -511,8 +504,7 @@ func executeScript(c *gin.Context) {
 	log.Printf("Executing command for script '%s' in pod '%s'... TrackingID: %s", selectedDefinition.Name, targetPod, request.TrackingID)
 
 	output, err := cmd.CombinedOutput()
-	outputStr := string(output) // Capture output string
-	// Truncate output for process tracking message
+	outputStr := string(output)
 	truncatedOutput := outputStr
 	if len(truncatedOutput) > maxProcessTrackingMessageLength {
 		truncatedOutput = truncatedOutput[:maxProcessTrackingMessageLength] + "... (truncated)"
@@ -520,37 +512,39 @@ func executeScript(c *gin.Context) {
 
 	if err != nil {
 		errMsgStr := fmt.Sprintf("Execution error: %v", err)
-		log.Printf("Execution FAILED for script '%s' (ID: %s) in pod '%s'. TrackingID: %s. Error: %v. Output: %s", selectedDefinition.Name, selectedDefinition.ID, targetPod, request.TrackingID, err, outputStr) // Log full output
-		// Send FAILED status UPDATE with combined error and truncated output
+		log.Printf("Execution FAILED for script '%s' (ID: %s) in pod '%s'. TrackingID: %s. Error: %v. Output: %s", selectedDefinition.Name, selectedDefinition.ID, targetPod, request.TrackingID, err, outputStr)
+		// Send FAILED status UPDATE
 		notifyProcessTrackingUpdate(config, numericProcessID, ProcessTrackingUpdatePayload{
 			Status:  "FAILED",
 			Message: fmt.Sprintf("%s\n--- Output ---\n%s", errMsgStr, truncatedOutput),
 		})
+		// Set Header and return response
+		if numericProcessID != 0 {
+			c.Header("X-ProcessId", strconv.FormatInt(numericProcessID, 10)) // Add Header
+		}
+		// Return JSON error body WITHOUT trackingId and processId
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"taskName":   actualScriptName,
-			"script_id":  selectedDefinition.ID,
-			"trackingId": request.TrackingID,
-			"processId":  numericProcessID,
-			"error":      errMsgStr,
-			"output":     outputStr, // Return full output in API response
+			"taskName":  actualScriptName,
+			"script_id": selectedDefinition.ID,
+			"error":     errMsgStr,
+			"output":    outputStr, // Keep output for debugging errors
 		})
 		return
 	}
 
 	// --- Execution Successful ---
-	log.Printf("Execution SUCCESSFUL for script '%s' (ID: %s) in pod '%s'. TrackingID: %s. Output: %s", selectedDefinition.Name, selectedDefinition.ID, targetPod, request.TrackingID, outputStr) // Log full output
-	// Send COMPLETED status UPDATE with truncated output
+	log.Printf("Execution SUCCESSFUL for script '%s' (ID: %s) in pod '%s'. TrackingID: %s. Output: %s", selectedDefinition.Name, selectedDefinition.ID, targetPod, request.TrackingID, outputStr)
+	// Send COMPLETED status UPDATE
 	notifyProcessTrackingUpdate(config, numericProcessID, ProcessTrackingUpdatePayload{
 		Status:  "COMPLETED",
 		Message: truncatedOutput,
 	})
-	c.JSON(http.StatusOK, gin.H{
-		"taskName":   actualScriptName,
-		"script_id":  selectedDefinition.ID,
-		"trackingId": request.TrackingID,
-		"processId":  numericProcessID,
-		"output":     outputStr, // Return full output in API response
-	})
+	// Set Header and return response
+	if numericProcessID != 0 {
+		c.Header("X-ProcessId", strconv.FormatInt(numericProcessID, 10)) // Add Header
+	}
+	// Return status OK with ONLY the header (if ID exists) and NO body, matching Java
+	c.Status(http.StatusOK)
 }
 
 // isValidEnvVarName checks if a string is a valid environment variable name
