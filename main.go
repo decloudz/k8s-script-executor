@@ -86,7 +86,7 @@ type ProcessTrackingCreatePayload struct {
 
 // ProcessTrackingUpdatePayload defines the structure sent to update an existing process tracking record
 type ProcessTrackingUpdatePayload struct {
-	Status  string `json:"status"` // e.g., COMPLETED, FAILED
+	Status  string `json:"status"` // e.g., SUCCESSFUL, FAILED
 	Message string `json:"message,omitempty"`
 	// Add other optional update fields if needed
 	// MessageLevel string `json:"messageLevel,omitempty"`
@@ -288,7 +288,7 @@ func notifyProcessTrackingCreate(config *Config, payload ProcessTrackingCreatePa
 	}
 }
 
-// notifyProcessTrackingUpdate sends the final status (COMPLETED/FAILED) update
+// notifyProcessTrackingUpdate sends the final status (SUCCESSFUL/FAILED) update
 func notifyProcessTrackingUpdate(config *Config, processID string, payload ProcessTrackingUpdatePayload) {
 	if config.ProcessTrackingURL == "" {
 		log.Printf("[ProcessTracking] Skipping UPDATE notification for ProcessID %s: PROCESS_TRACKING_SERVICE_URL not set.", processID)
@@ -496,8 +496,8 @@ func executeScript(c *gin.Context) {
 
 	// --- Execution Successful ---
 	log.Printf("Execution SUCCESSFUL for script '%s' (ID: %s) in pod '%s'. TrackingID: %s. Output: %s", selectedDefinition.Name, selectedDefinition.ID, targetPod, request.TrackingID, string(output))
-	// Send COMPLETED status UPDATE before returning success response
-	notifyProcessTrackingUpdate(config, processID, ProcessTrackingUpdatePayload{Status: "COMPLETED"})
+	// Send SUCCESSFUL status UPDATE before returning success response
+	notifyProcessTrackingUpdate(config, processID, ProcessTrackingUpdatePayload{Status: "SUCCESSFUL"})
 	c.JSON(http.StatusOK, gin.H{
 		"taskName":   actualScriptName,
 		"script_id":  selectedDefinition.ID,
