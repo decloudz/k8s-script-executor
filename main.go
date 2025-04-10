@@ -315,6 +315,7 @@ func notifyProcessTrackingCreate(config *Config, payload ProcessTrackingCreatePa
 
 // notifyProcessTrackingUpdate sends the final status update using the numeric processID
 func notifyProcessTrackingUpdate(config *Config, numericProcessID int64, payload ProcessTrackingUpdatePayload) {
+	// Skip if URL not set OR if we failed to get a valid numeric ID from the creation step
 	if config.ProcessTrackingURL == "" || numericProcessID == 0 {
 		log.Printf("[ProcessTracking UPDATE] Skipping notification for ProcessID %d: URL not set or ProcessID is zero.", numericProcessID)
 		return
