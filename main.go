@@ -374,46 +374,44 @@ func executeScript(c *gin.Context) {
 	config := loadConfig()
 	var request TaskServiceRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
-		log.Printf("Failed to bind JSON payload: %v", err)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request payload format"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body: " + err.Error()})
 		return
 	}
 
-	// --- Get Tracking ID from Header ---
-	headerTrackingID := c.GetHeader("X-Tracking-Id")
-	if headerTrackingID == "" {
-		log.Printf("ERROR: X-Tracking-Id header is missing or empty in the request. Cannot create process tracking record.")
-		// Fail fast as the create call requires it and subsequent updates depend on the result
-		c.JSON(http.StatusBadRequest, gin.H{"error": "X-Tracking-Id header is required"})
-		return
+	// --- Use Tracking ID from Request BODY ---
+	bodyTrackingID := request.TrackingID
+	if bodyTrackingID == "" {
+		// Log warning, as the tracking service might still require this for correlation.
+		// Creation might fail if the backend requires a non-empty 'processId' in the payload.
+		log.Printf("WARNING: TrackingID field in the request body is empty. Process Tracking creation/correlation may fail.")
 	}
-	log.Printf("Received execute request. Header X-Tracking-Id: '%s', Body TrackingID (ignored): '%s'", headerTrackingID, request.TrackingID)
+	log.Printf("Received execute request. Body TrackingID: '%s'", bodyTrackingID)
 
 	// Extract actual script name
 	scriptNameInterface, nameOk := request.TaskData["name"]
 	if !nameOk {
-		log.Printf("Execute request failed: taskData is missing the 'name' field. TrackingID: %s", request.TrackingID)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "taskData must contain a 'name' field specifying the script to run", "trackingId": request.TrackingID})
+		log.Printf("ERROR: taskData is missing the 'name' field. TrackingID: %s", bodyTrackingID)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "taskData must contain a 'name' field specifying the script to run"})
 		return
 	}
 	actualScriptName, nameIsString := scriptNameInterface.(string)
 	if !nameIsString || actualScriptName == "" {
-		log.Printf("Execute request failed: taskData 'name' field is not a non-empty string ('%v'). TrackingID: %s", scriptNameInterface, request.TrackingID)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "taskData 'name' field must be a non-empty string", "trackingId": request.TrackingID})
+		log.Printf("ERROR: taskData 'name' field is not a non-empty string ('%v'). TrackingID: %s", scriptNameInterface, bodyTrackingID)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "taskData 'name' field must be a non-empty string"})
 		return
 	}
 
 	// --- Process Tracking Start ---
 	// Create the process record SYNCHRONOUSLY to get the numeric ID from the header
 	numericProcessID, createErr := notifyProcessTrackingCreate(config, ProcessTrackingCreatePayload{
-		Name:       actualScriptName,
-		TrackingID: headerTrackingID, // Use header tracking ID, mapped to 'processId' in JSON
+		Name:       actualScriptName, // Use extracted name
+		TrackingID: bodyTrackingID,   // Use BODY tracking ID, mapped to 'processId' in JSON
 		Stage:      config.ProcessTrackingStage,
 	})
 
 	if createErr != nil {
 		// Log the creation error and fail the request
-		log.Printf("ERROR: Failed to create initial process tracking record for script '%s', Header TrackingID '%s': %v", actualScriptName, headerTrackingID, createErr)
+		log.Printf("ERROR: Failed to create initial process tracking record for script '%s', Body TrackingID '%s': %v", actualScriptName, bodyTrackingID, createErr)
 		// Do NOT send an update notification here, as creation failed.
 		// Return a server error. Do not set X-ProcessId header as we didn't get one.
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to initialize process tracking: %v", createErr)})
