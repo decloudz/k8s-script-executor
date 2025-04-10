@@ -24,6 +24,11 @@ import (
 	"k8s.io/client-go/rest"
 )
 
+const (
+	// Max length for output sent to Process Tracking message field
+	maxProcessTrackingMessageLength = 1000
+)
+
 // ParameterOption defines the structure for options within a script's *top-level* parameter definition
 // (Used if the script itself is presented like a parameter with predefined choices, like in the previous Go structure)
 // This might become less relevant with the new response structure but keep for loading compatibility for now.
@@ -402,13 +407,13 @@ func executeScript(c *gin.Context) {
 	if err != nil {
 		log.Printf("Error loading script definitions during execute: %v, TrackingID: %s", err, request.TrackingID)
 		statusCode := http.StatusInternalServerError
-		errMsg := fmt.Sprintf("Server configuration error: Failed to load or parse script definitions file: %v", err)
+		errMsgStr := fmt.Sprintf("Failed to load script definitions: %v", err)
 		if os.IsNotExist(err) {
-			errMsg = fmt.Sprintf("Server configuration error: Script definitions file not found at %s", config.ScriptsPath)
+			errMsgStr = fmt.Sprintf("Server configuration error: Script definitions file not found at %s", config.ScriptsPath)
 		}
 		// Send FAILED status UPDATE using numeric ID
-		notifyProcessTrackingUpdate(config, numericProcessID, ProcessTrackingUpdatePayload{Status: "FAILED", Message: fmt.Sprintf("Failed to load script definitions: %v", err)})
-		c.JSON(statusCode, gin.H{"error": errMsg, "trackingId": request.TrackingID, "processId": numericProcessID}) // Include ProcessID in response
+		notifyProcessTrackingUpdate(config, numericProcessID, ProcessTrackingUpdatePayload{Status: "FAILED", Message: errMsgStr})
+		c.JSON(statusCode, gin.H{"error": errMsgStr, "trackingId": request.TrackingID, "processId": numericProcessID}) // Include ProcessID in response
 		return
 	}
 
@@ -505,31 +510,45 @@ func executeScript(c *gin.Context) {
 	log.Printf("Executing command for script '%s' in pod '%s'... TrackingID: %s", selectedDefinition.Name, targetPod, request.TrackingID)
 
 	output, err := cmd.CombinedOutput()
+	outputStr := string(output) // Capture output string
+	// Truncate output for process tracking message
+	truncatedOutput := outputStr
+	if len(truncatedOutput) > maxProcessTrackingMessageLength {
+		truncatedOutput = truncatedOutput[:maxProcessTrackingMessageLength] + "... (truncated)"
+	}
+
 	if err != nil {
-		log.Printf("Execution FAILED for script '%s' (ID: %s) in pod '%s'. TrackingID: %s. Error: %v. Output: %s", selectedDefinition.Name, selectedDefinition.ID, targetPod, request.TrackingID, err, string(output))
-		// Send FAILED status UPDATE using numeric ID
-		notifyProcessTrackingUpdate(config, numericProcessID, ProcessTrackingUpdatePayload{Status: "FAILED", Message: fmt.Sprintf("Execution error: %v", err)})
+		errMsgStr := fmt.Sprintf("Execution error: %v", err)
+		log.Printf("Execution FAILED for script '%s' (ID: %s) in pod '%s'. TrackingID: %s. Error: %v. Output: %s", selectedDefinition.Name, selectedDefinition.ID, targetPod, request.TrackingID, err, outputStr) // Log full output
+		// Send FAILED status UPDATE with combined error and truncated output
+		notifyProcessTrackingUpdate(config, numericProcessID, ProcessTrackingUpdatePayload{
+			Status:  "FAILED",
+			Message: fmt.Sprintf("%s\n--- Output ---\n%s", errMsgStr, truncatedOutput),
+		})
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"taskName":   actualScriptName,
 			"script_id":  selectedDefinition.ID,
 			"trackingId": request.TrackingID,
-			"processId":  numericProcessID, // Include ProcessID in response
-			"error":      fmt.Sprintf("Script execution failed: %v", err),
-			"output":     string(output),
+			"processId":  numericProcessID,
+			"error":      errMsgStr,
+			"output":     outputStr, // Return full output in API response
 		})
 		return
 	}
 
 	// --- Execution Successful ---
-	log.Printf("Execution SUCCESSFUL for script '%s' (ID: %s) in pod '%s'. TrackingID: %s. Output: %s", selectedDefinition.Name, selectedDefinition.ID, targetPod, request.TrackingID, string(output))
-	// Send COMPLETED status UPDATE using numeric ID
-	notifyProcessTrackingUpdate(config, numericProcessID, ProcessTrackingUpdatePayload{Status: "COMPLETED"})
+	log.Printf("Execution SUCCESSFUL for script '%s' (ID: %s) in pod '%s'. TrackingID: %s. Output: %s", selectedDefinition.Name, selectedDefinition.ID, targetPod, request.TrackingID, outputStr) // Log full output
+	// Send COMPLETED status UPDATE with truncated output
+	notifyProcessTrackingUpdate(config, numericProcessID, ProcessTrackingUpdatePayload{
+		Status:  "COMPLETED",
+		Message: truncatedOutput,
+	})
 	c.JSON(http.StatusOK, gin.H{
 		"taskName":   actualScriptName,
 		"script_id":  selectedDefinition.ID,
 		"trackingId": request.TrackingID,
-		"processId":  numericProcessID, // Include ProcessID in response
-		"output":     string(output),
+		"processId":  numericProcessID,
+		"output":     outputStr, // Return full output in API response
 	})
 }
 
