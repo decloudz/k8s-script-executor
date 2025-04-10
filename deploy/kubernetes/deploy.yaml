@@ -2,6 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: k8s-script-executor
+  namespace: prime-edm
 spec:
   replicas: 1
   selector:
@@ -17,6 +18,7 @@ spec:
       containers:
       - name: server
         image: ghcr.io/decloudz/k8s-script-executor:latest
+        imagePullPolicy: Always
         ports:
         - containerPort: 8080
         env:
@@ -24,11 +26,34 @@ spec:
           value: "prime-cloud"
         - name: SCRIPTS_PATH
           value: "/config/scripts.json"
-        - name: POD_LABEL
-          value: "app=prime-query-server"  # Can be overridden by API request
+        - name: POD_LABEL_SELECTOR
+          value: "app=prime-query-server"
+        - name: PROCESS_TRACKING_SERVICE_URL
+          value: "http://prime-edm-ops360-process-tracking.prime-edm.svc.cluster.local:8080/process-tracking"
+        - name: PROCESS_TRACKING_STAGE
+          value: "ENRICHMENT"
+        - name: PROCESS_TRACKING_GROUP
+          value: "test"
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 15
+          periodSeconds: 10
+          timeoutSeconds: 2
+          failureThreshold: 3
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 20
+          periodSeconds: 15
+          timeoutSeconds: 2
+          failureThreshold: 3
         volumeMounts:
         - name: scripts-config
           mountPath: /config
+          readOnly: true
       serviceAccountName: exec-sa
       serviceAccount: exec-sa
       volumes:

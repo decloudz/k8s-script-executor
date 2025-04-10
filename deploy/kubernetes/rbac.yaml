@@ -1,39 +1,45 @@
+# ClusterRole defines permissions needed cluster-wide (or across specific namespaces via binding)
 apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
+kind: ClusterRole
 metadata:
-  name: pod-exec-role
+  name: pod-exec-clusterrole # Renamed to reflect cluster scope
 rules:
-  # Permissions needed to find the target pod
+  # Permissions needed to find the target pod in any bound namespace
   - apiGroups: [""] # Core API group
     resources: ["pods"]
     verbs: ["get", "list"]
-  # Permission needed to execute commands in the pod
+  # Permission needed to execute commands in pods in any bound namespace
   - apiGroups: [""] # Core API group
     resources: ["pods/exec"]
     verbs: ["create"]
-  # Permission needed for the startup health check
+  # Permission needed for the startup health check (can check in its own namespace)
+  # If the check needs to happen in the target namespace, keep this rule.
+  # If check only happens in own ns, a separate Role/Rolebinding is needed for this.
+  # For simplicity, keeping it in ClusterRole for now.
   - apiGroups: ["authorization.k8s.io"]
     resources: ["selfsubjectaccessreviews"]
     verbs: ["create"]
 
-
 ---
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: pod-exec-binding
-subjects:
-  - kind: ServiceAccount
-    name: exec-sa
-    namespace: prime-edm
-roleRef:
-  kind: Role
-  name: pod-exec-role
-  apiGroup: rbac.authorization.k8s.io
-
-
----
+# ServiceAccount for the script executor - lives in the executor's namespace
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: exec-sa
+  namespace: prime-edm
+
+---
+# RoleBinding grants the ClusterRole permissions to the SA within the TARGET namespace
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pod-exec-binding-in-prime-cloud # Specific name
+  namespace: prime-cloud
+subjects:
+  - kind: ServiceAccount
+    name: exec-sa           # Name of the ServiceAccount
+    namespace: prime-edm     # <<<<<< Namespace of the ServiceAccount
+roleRef:
+  kind: ClusterRole           # Use ClusterRole
+  name: pod-exec-clusterrole # Name of the ClusterRole
+  apiGroup: rbac.authorization.k8s.io

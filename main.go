@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -11,8 +12,10 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 
 	// Kubernetes imports
 	authv1 "k8s.io/api/authorization/v1"
@@ -71,19 +74,37 @@ type TaskServiceRequest struct {
 	TaskData    map[string]interface{} `json:"taskData"` // Use interface{} for flexible value types
 }
 
+// ProcessTrackingPayload defines the structure sent to the Process Tracking service
+type ProcessTrackingPayload struct {
+	ProcessID string `json:"processId"`
+	Name      string `json:"name"` // Script Name
+	Stage     string `json:"stage"`
+	Group     string `json:"group"`
+	Status    string `json:"status"` // e.g., PROGRESS, COMPLETED, FAILED
+	Label     string `json:"label,omitempty"`
+	// Add other fields if needed by Process Tracking API
+}
+
 // Config holds application configuration
 type Config struct {
-	ScriptsPath      string // Path to the combined script definitions file
+	ScriptsPath      string
 	PodLabelSelector string
 	Namespace        string
+	// Process Tracking Config
+	ProcessTrackingURL   string
+	ProcessTrackingStage string
+	ProcessTrackingGroup string
 }
 
 // Load configuration from environment variables with fallbacks
 func loadConfig() *Config {
 	return &Config{
-		ScriptsPath:      getEnvOrDefault("SCRIPTS_PATH", "/config/scripts.json"), // Default matches deploy.yaml
-		PodLabelSelector: getEnvOrDefault("POD_LABEL_SELECTOR", "app=query-server"),
-		Namespace:        getEnvOrDefault("NAMESPACE", "default"),
+		ScriptsPath:          getEnvOrDefault("SCRIPTS_PATH", "/config/scripts.json"),
+		PodLabelSelector:     getEnvOrDefault("POD_LABEL_SELECTOR", "app=query-server"),
+		Namespace:            getEnvOrDefault("NAMESPACE", "default"),
+		ProcessTrackingURL:   os.Getenv("PROCESS_TRACKING_SERVICE_URL"),                    // Mandatory? Add check if so.
+		ProcessTrackingStage: getEnvOrDefault("PROCESS_TRACKING_STAGE", "EXECUTION"),       // Example default
+		ProcessTrackingGroup: getEnvOrDefault("PROCESS_TRACKING_GROUP", "ScriptExecution"), // Example default
 	}
 }
 
@@ -213,7 +234,47 @@ func listScripts(c *gin.Context) {
 	c.Data(http.StatusOK, "application/json", jsonData)
 }
 
-// executeScript handles the /v1/execute endpoint, adapting to TaskService payload.
+// --- Process Tracking Helper ---
+var httpClient = &http.Client{Timeout: 10 * time.Second}
+
+func notifyProcessTracking(config *Config, payload ProcessTrackingPayload) {
+	if config.ProcessTrackingURL == "" {
+		log.Printf("[ProcessTracking] Skipping notification for ProcessID %s: PROCESS_TRACKING_SERVICE_URL not set.", payload.ProcessID)
+		return // Silently skip if URL is not configured
+	}
+
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		log.Printf("[ProcessTracking] Error marshaling payload for ProcessID %s: %v", payload.ProcessID, err)
+		return // Cannot send notification
+	}
+
+	req, err := http.NewRequest("POST", config.ProcessTrackingURL, bytes.NewBuffer(payloadBytes))
+	if err != nil {
+		log.Printf("[ProcessTracking] Error creating request for ProcessID %s: %v", payload.ProcessID, err)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	// Add authentication headers here if needed
+	// req.Header.Set("Authorization", "Bearer ...")
+
+	log.Printf("[ProcessTracking] Sending status '%s' for ProcessID %s (Name: %s)", payload.Status, payload.ProcessID, payload.Name)
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		log.Printf("[ProcessTracking] Error sending notification for ProcessID %s: %v", payload.ProcessID, err)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		bodyBytes, _ := ioutil.ReadAll(resp.Body)
+		log.Printf("[ProcessTracking] Notification failed for ProcessID %s: Status %d, Body: %s", payload.ProcessID, resp.StatusCode, string(bodyBytes))
+	} else {
+		log.Printf("[ProcessTracking] Notification successful for ProcessID %s (Status: %s)", payload.ProcessID, payload.Status)
+	}
+}
+
+// executeScript handles the /v1/execute endpoint, integrating Process Tracking.
 func executeScript(c *gin.Context) {
 	config := loadConfig()
 
@@ -224,10 +285,9 @@ func executeScript(c *gin.Context) {
 		return
 	}
 
-	// ---> Log: Received execution request
 	log.Printf("Received execute request via Task Service - TaskName(Instance): '%s', TrackingID: %s, TaskData: %v", request.TaskName, request.TrackingID, request.TaskData)
 
-	// --- Extract Actual Script Name from TaskData ---
+	// Extract actual script name
 	scriptNameInterface, nameOk := request.TaskData["name"]
 	if !nameOk {
 		log.Printf("Execute request failed: taskData is missing the 'name' field. TrackingID: %s", request.TrackingID)
@@ -241,10 +301,38 @@ func executeScript(c *gin.Context) {
 		return
 	}
 
-	// ---> Log: Extracted script name
-	log.Printf("Extracted actual script name '%s' from taskData. TrackingID: %s", actualScriptName, request.TrackingID)
+	// --- Process Tracking Start ---
+	processID := uuid.NewString()
+	log.Printf("Generated ProcessID: %s for script '%s', TrackingID: %s", processID, actualScriptName, request.TrackingID)
 
-	// Add validation for TrackingID if needed
+	// Notify PROGRESS start
+	go notifyProcessTracking(config, ProcessTrackingPayload{
+		ProcessID: processID,
+		Name:      actualScriptName,            // Use actual script name
+		Stage:     config.ProcessTrackingStage, // From config
+		Group:     config.ProcessTrackingGroup, // From config
+		Status:    "PROGRESS",
+		Label:     actualScriptName, // Use script name as label for now
+	})
+
+	// Defer notification for final status
+	var finalStatus = "FAILED" // Default to FAILED
+	defer func() {
+		// This runs when executeScript function exits (normally or via return)
+		log.Printf("Sending final status '%s' for ProcessID %s", finalStatus, processID)
+		go notifyProcessTracking(config, ProcessTrackingPayload{
+			ProcessID: processID,
+			Name:      actualScriptName,
+			Stage:     config.ProcessTrackingStage,
+			Group:     config.ProcessTrackingGroup,
+			Status:    finalStatus,
+			Label:     actualScriptName,
+		})
+	}()
+
+	// --- Resume normal execution flow ---
+
+	log.Printf("Extracted actual script name '%s' from taskData. TrackingID: %s", actualScriptName, request.TrackingID)
 
 	// Load script definitions
 	definitions, err := loadScriptDefinitions(config.ScriptsPath)
@@ -259,7 +347,7 @@ func executeScript(c *gin.Context) {
 		return
 	}
 
-	// Find the requested script definition by the *actual* script name from taskData
+	// Find the requested script definition
 	var selectedDefinition *ScriptDefinition
 	for i := range definitions {
 		// Match against the name extracted from taskData.name
@@ -275,7 +363,6 @@ func executeScript(c *gin.Context) {
 		return
 	}
 
-	// ---> Log: Found script definition
 	log.Printf("Found definition for script '%s' (ID: %s). TrackingID: %s", selectedDefinition.Name, selectedDefinition.ID, request.TrackingID)
 
 	// Get the target pod
@@ -286,7 +373,6 @@ func executeScript(c *gin.Context) {
 		return
 	}
 
-	// ---> Log: Target pod identified
 	log.Printf("Target pod for script '%s' execution: %s (Namespace: %s, Selector: %s). TrackingID: %s", selectedDefinition.Name, targetPod, config.Namespace, config.PodLabelSelector, request.TrackingID)
 
 	// Prepare environment variables by extracting values from taskData based on script's AcceptedParameters
@@ -343,29 +429,33 @@ func executeScript(c *gin.Context) {
 	)
 	log.Printf("Constructed kubectl command for script '%s': %s. TrackingID: %s", selectedDefinition.Name, execCmd, request.TrackingID)
 
+	// Execute command
 	cmd := exec.Command("sh", "-c", execCmd)
 	log.Printf("Executing command for script '%s' in pod '%s'... TrackingID: %s", selectedDefinition.Name, targetPod, request.TrackingID)
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
+		// Log failure (finalStatus remains FAILED)
 		log.Printf("Execution FAILED for script '%s' (ID: %s) in pod '%s'. TrackingID: %s. Error: %v. Output: %s", selectedDefinition.Name, selectedDefinition.ID, targetPod, request.TrackingID, err, string(output))
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"taskName":   actualScriptName, // Return the actual script name
+			"taskName":   actualScriptName,
 			"script_id":  selectedDefinition.ID,
 			"trackingId": request.TrackingID,
 			"error":      fmt.Sprintf("Script execution failed: %v", err),
 			"output":     string(output),
 		})
-		return
+		return // defer function will send FAILED status
 	}
 
+	// --- Execution Successful ---
+	finalStatus = "COMPLETED" // Set final status to COMPLETED
 	log.Printf("Execution SUCCESSFUL for script '%s' (ID: %s) in pod '%s'. TrackingID: %s. Output: %s", selectedDefinition.Name, selectedDefinition.ID, targetPod, request.TrackingID, string(output))
 	c.JSON(http.StatusOK, gin.H{
-		"taskName":   actualScriptName, // Return the actual script name
+		"taskName":   actualScriptName,
 		"script_id":  selectedDefinition.ID,
 		"trackingId": request.TrackingID,
 		"output":     string(output),
-	})
+	}) // defer function will send COMPLETED status
 }
 
 // isValidEnvVarName checks if a string is a valid environment variable name
