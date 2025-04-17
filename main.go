@@ -385,6 +385,10 @@ func executeScript(c *gin.Context) {
 		return
 	}
 
+	// Dump the entire request for debugging
+	requestJSON, _ := json.MarshalIndent(request, "", "  ")
+	log.Printf("DEBUG - Full request received: %s", string(requestJSON))
+
 	// --- Use Tracking ID from Request BODY ---
 	bodyTrackingID := request.TrackingID
 	if bodyTrackingID == "" {
@@ -515,27 +519,61 @@ func executeScript(c *gin.Context) {
 		log.Printf("Available taskData keys for script '%s': %v. TrackingID: %s",
 			selectedDefinition.Name, taskDataKeys, bodyTrackingID)
 
+		// Dump raw taskData values
+		taskDataJSON, _ := json.MarshalIndent(request.TaskData, "", "  ")
+		log.Printf("DEBUG - Raw taskData contents: %s", string(taskDataJSON))
+
+		// Create a case-insensitive version of taskData for flexible matching
+		caseInsensitiveTaskData := make(map[string]interface{})
+		for k, v := range request.TaskData {
+			caseInsensitiveTaskData[strings.ToUpper(k)] = v
+		}
+
 		for _, paramDef := range selectedDefinition.Parameters {
 			log.Printf("Looking for parameter '%s' (optional: %v) in taskData. TrackingID: %s",
 				paramDef.Name, paramDef.Optional, bodyTrackingID)
 
-			paramValueInterface, valueOk := request.TaskData[paramDef.Name] // Look for key matching paramDef.Name in taskData
+			// First try exact match
+			paramValueInterface, valueOk := request.TaskData[paramDef.Name]
+
+			// If not found, try case-insensitive match
+			if !valueOk {
+				upperParamName := strings.ToUpper(paramDef.Name)
+				for k, v := range request.TaskData {
+					if strings.ToUpper(k) == upperParamName {
+						paramValueInterface = v
+						valueOk = true
+						log.Printf("Found parameter '%s' with case-insensitive match on key '%s'. TrackingID: %s",
+							paramDef.Name, k, bodyTrackingID)
+						break
+					}
+				}
+			}
 
 			if !valueOk {
 				// Handle missing parameter value - check if it was optional in definition
 				if !paramDef.Optional {
-					log.Printf("Execute request failed for script '%s': Required parameter '%s' missing in taskData. TrackingID: %s", selectedDefinition.Name, paramDef.Name, request.TrackingID)
+					log.Printf("Execute request failed for script '%s': Required parameter '%s' missing in taskData. TrackingID: %s",
+						selectedDefinition.Name, paramDef.Name, bodyTrackingID)
+					log.Printf("DEBUG - Expected parameter: '%s', Available keys: %v", paramDef.Name, taskDataKeys)
+
 					// Send FAILED status UPDATE using the OBTAINED numeric ID if process tracking is enabled
+					failureMsg := fmt.Sprintf("Required parameter '%s' missing. Available keys: %v",
+						paramDef.Name, taskDataKeys)
+
 					if numericProcessID > 0 {
-						notifyProcessTrackingUpdate(config, numericProcessID, ProcessTrackingUpdatePayload{Status: "FAILED", Message: fmt.Sprintf("Required parameter '%s' missing", paramDef.Name)})
+						notifyProcessTrackingUpdate(config, numericProcessID, ProcessTrackingUpdatePayload{
+							Status:  "FAILED",
+							Message: failureMsg,
+						})
 						// Set Header (using OBTAINED numericProcessID)
 						c.Header("X-ProcessId", strconv.FormatInt(numericProcessID, 10))
 					}
-					c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Required parameter '%s' is missing in taskData", paramDef.Name)})
+					c.JSON(http.StatusBadRequest, gin.H{"error": failureMsg})
 					return
 				} else {
 					// Optional parameter is missing, skip setting env var for it
-					log.Printf("Optional parameter '%s' for script '%s' missing in taskData, skipping. TrackingID: %s", paramDef.Name, selectedDefinition.Name, request.TrackingID)
+					log.Printf("Optional parameter '%s' for script '%s' missing in taskData, skipping. TrackingID: %s", paramDef.Name, selectedDefinition.Name, bodyTrackingID)
 					continue
 				}
 			}
