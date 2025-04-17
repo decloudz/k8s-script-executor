@@ -50,9 +50,9 @@ type InputParameterDef struct {
 // ScriptDefinition holds the combined definition loaded from scripts.json
 type ScriptDefinition struct {
 	// Fields for identifying the script and its command
-	ID      string `json:"id"`      // Required
-	Name    string `json:"name"`    // Required (This will be the top-level "name" in the response)
-	Command string `json:"command"` // Required
+	ID      string `json:"id,omitempty"` // Optional - will be auto-generated from name if not provided
+	Name    string `json:"name"`         // Required (This will be the top-level "name" in the response)
+	Command string `json:"command"`      // Required
 
 	// Input parameters the script accepts
 	Parameters []InputParameterDef `json:"parameters,omitempty"`
@@ -150,10 +150,13 @@ func loadScriptDefinitions(filePath string) ([]ScriptDefinition, error) {
 
 	// Validate definitions
 	for i := range definitions {
-		// Validate top-level required fields
+		// Validate top-level required fields and set default ID if needed
 		if definitions[i].ID == "" {
-			return nil, fmt.Errorf("script definition %d in '%s' is missing required 'id' field", i, filePath)
+			// Generate an ID based on name if not provided
+			definitions[i].ID = strings.ToLower(strings.ReplaceAll(definitions[i].Name, " ", "-"))
+			log.Printf("Auto-generated ID '%s' for script definition with name '%s'", definitions[i].ID, definitions[i].Name)
 		}
+
 		if definitions[i].Name == "" {
 			return nil, fmt.Errorf("script definition %d (id: %s) in '%s' is missing required 'name' field", i, definitions[i].ID, filePath)
 		}
