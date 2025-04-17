@@ -388,9 +388,9 @@ func executeScript(c *gin.Context) {
 	// --- Use Tracking ID from Request BODY ---
 	bodyTrackingID := request.TrackingID
 	if bodyTrackingID == "" {
-		// Log warning, as the tracking service might still require this for correlation.
-		// Creation might fail if the backend requires a non-empty 'processId' in the payload.
-		log.Printf("WARNING: TrackingID field in the request body is empty. Process Tracking creation/correlation may fail.")
+		// Generate a unique tracking ID if not provided - using timestamp
+		bodyTrackingID = fmt.Sprintf("%d", time.Now().UnixNano())
+		log.Printf("Auto-generated TrackingID '%s' because request TrackingID was empty.", bodyTrackingID)
 	}
 	log.Printf("Received execute request. Body TrackingID: '%s'", bodyTrackingID)
 
@@ -507,7 +507,18 @@ func executeScript(c *gin.Context) {
 		var envVars []string
 		log.Printf("Processing %d parameters for script '%s'. TrackingID: %s", len(selectedDefinition.Parameters), selectedDefinition.Name, request.TrackingID)
 
+		// Log all available taskData keys to help debugging
+		var taskDataKeys []string
+		for k := range request.TaskData {
+			taskDataKeys = append(taskDataKeys, k)
+		}
+		log.Printf("Available taskData keys for script '%s': %v. TrackingID: %s",
+			selectedDefinition.Name, taskDataKeys, bodyTrackingID)
+
 		for _, paramDef := range selectedDefinition.Parameters {
+			log.Printf("Looking for parameter '%s' (optional: %v) in taskData. TrackingID: %s",
+				paramDef.Name, paramDef.Optional, bodyTrackingID)
+
 			paramValueInterface, valueOk := request.TaskData[paramDef.Name] // Look for key matching paramDef.Name in taskData
 
 			if !valueOk {
@@ -528,6 +539,11 @@ func executeScript(c *gin.Context) {
 					continue
 				}
 			}
+
+			// Log the value type for debugging
+			valueType := fmt.Sprintf("%T", paramValueInterface)
+			log.Printf("Found parameter '%s' with value type '%s'. TrackingID: %s",
+				paramDef.Name, valueType, bodyTrackingID)
 
 			// Convert value to string
 			paramValueStr := fmt.Sprintf("%v", paramValueInterface)
