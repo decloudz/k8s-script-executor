@@ -725,16 +725,20 @@ func executeScript(c *gin.Context) {
 
 			// Try to find the variable in our environment map
 			if value, exists := envVarMap[sanitizedVarName]; exists {
-				commandWithVarsExpanded = strings.ReplaceAll(commandWithVarsExpanded, varPattern, value)
-				log.Printf("Replaced variable %s with value %s in command. TrackingID: %s", varPattern, value, bodyTrackingID)
+				// Quote the value for shell safety when expanding in command
+				quotedValue := fmt.Sprintf("'%s'", strings.ReplaceAll(value, "'", "'\\''"))
+				commandWithVarsExpanded = strings.ReplaceAll(commandWithVarsExpanded, varPattern, quotedValue)
+				log.Printf("Replaced variable %s with quoted value %s in command. TrackingID: %s", varPattern, quotedValue, bodyTrackingID)
 			} else {
 				// Try case-insensitive match
 				foundCaseInsensitive := false
 				for envName, envValue := range envVarMap {
 					if strings.EqualFold(envName, sanitizedVarName) {
-						commandWithVarsExpanded = strings.ReplaceAll(commandWithVarsExpanded, varPattern, envValue)
-						log.Printf("Replaced variable %s with case-insensitive match %s=%s in command. TrackingID: %s",
-							varPattern, envName, envValue, bodyTrackingID)
+						// Quote the value for shell safety when expanding in command
+						quotedValue := fmt.Sprintf("'%s'", strings.ReplaceAll(envValue, "'", "'\\''"))
+						commandWithVarsExpanded = strings.ReplaceAll(commandWithVarsExpanded, varPattern, quotedValue)
+						log.Printf("Replaced variable %s with case-insensitive match %s=%s (quoted) in command. TrackingID: %s",
+							varPattern, envName, quotedValue, bodyTrackingID)
 						foundCaseInsensitive = true
 						break
 					}
