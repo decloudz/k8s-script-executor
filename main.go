@@ -517,13 +517,13 @@ func executeScript(c *gin.Context) {
 
 		// Create a normalized parameters map that merges all possible parameter sources
 		// This helps us handle different parameter passing conventions
-		normalizedParams := make(map[string]interface{})
+		normalizedParamsMap := make(map[string]interface{})
 
 		// 1. First add all direct taskData keys (except 'name' and 'parameters' which are special)
 		for k, v := range request.TaskData {
 			// Skip special keys that aren't actual parameters
 			if k != "name" && k != "parameters" {
-				normalizedParams[k] = v
+				normalizedParamsMap[k] = v
 				log.Printf("Added direct parameter from taskData: '%s'. TrackingID: %s", k, bodyTrackingID)
 			}
 		}
@@ -543,21 +543,21 @@ func executeScript(c *gin.Context) {
 						// Look for name/value pattern
 						if name, hasName := paramObj["name"].(string); hasName {
 							if value, hasValue := paramObj["value"]; hasValue {
-								normalizedParams[name] = value
+								normalizedParamsMap[name] = value
 								log.Printf("Added parameter from array item %d: '%s'='%v'. TrackingID: %s",
 									i, name, value, bodyTrackingID)
 							}
 						} else {
 							// If no name/value pattern, treat the whole object as parameters
 							for k, v := range paramObj {
-								normalizedParams[k] = v
+								normalizedParamsMap[k] = v
 								log.Printf("Added parameter from array item %d property: '%s'='%v'. TrackingID: %s",
 									i, k, v, bodyTrackingID)
 							}
 						}
 					} else if paramName, isString := paramItem.(string); isString {
 						// Handle case where parameters is just an array of strings (names without values)
-						normalizedParams[paramName] = ""
+						normalizedParamsMap[paramName] = ""
 						log.Printf("Added parameter name from array item %d: '%s' (no value). TrackingID: %s",
 							i, paramName, bodyTrackingID)
 					}
@@ -565,7 +565,7 @@ func executeScript(c *gin.Context) {
 			} else if paramsObj, isObj := parametersInterface.(map[string]interface{}); isObj {
 				// Handle parameters as a simple object of key/value pairs
 				for k, v := range paramsObj {
-					normalizedParams[k] = v
+					normalizedParamsMap[k] = v
 					log.Printf("Added parameter from parameters object: '%s'='%v'. TrackingID: %s",
 						k, v, bodyTrackingID)
 				}
@@ -574,7 +574,7 @@ func executeScript(c *gin.Context) {
 
 		// Log the available parameter names after normalization
 		var availableParamNames []string
-		for k := range normalizedParams {
+		for k := range normalizedParamsMap {
 			availableParamNames = append(availableParamNames, k)
 		}
 		log.Printf("Available normalized parameters for script '%s': %v. TrackingID: %s",
@@ -586,7 +586,7 @@ func executeScript(c *gin.Context) {
 				paramDef.Name, paramDef.Optional, bodyTrackingID)
 
 			// First try exact match
-			paramValueInterface, valueOk := normalizedParams[paramDef.Name]
+			paramValueInterface, valueOk := normalizedParamsMap[paramDef.Name]
 			if valueOk {
 				log.Printf("Found parameter '%s' with exact match. TrackingID: %s",
 					paramDef.Name, bodyTrackingID)
@@ -600,7 +600,7 @@ func executeScript(c *gin.Context) {
 				normalizedParamNameWithSpaces := strings.ReplaceAll(normalizedParamName, "_", " ")
 				normalizedParamNameWithUnderscores := strings.ReplaceAll(normalizedParamName, " ", "_")
 
-				for k, v := range normalizedParams {
+				for k, v := range normalizedParamsMap {
 					normalizedKey := strings.ToUpper(k)
 					normalizedKeyWithSpaces := strings.ReplaceAll(normalizedKey, "_", " ")
 					normalizedKeyWithUnderscores := strings.ReplaceAll(normalizedKey, " ", "_")
@@ -662,8 +662,8 @@ func executeScript(c *gin.Context) {
 			envVarName := sanitizeEnvVarName(paramDef.Name)
 			if !isValidEnvVarName(envVarName) {
 				// This should ideally not happen if sanitizeEnvVarName is robust
-				log.Printf("Internal Error for script '%s': Sanitized parameter name '%s' (from '%s') is invalid. TrackingID: %s", selectedDefinition.Name, envVarName, paramDef.Name, request.TrackingID)
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error processing parameter names", "trackingId": request.TrackingID})
+				log.Printf("Internal Error for script '%s': Sanitized parameter name '%s' (from '%s') is invalid. TrackingID: %s", selectedDefinition.Name, envVarName, paramDef.Name, bodyTrackingID)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error processing parameter names", "trackingId": bodyTrackingID})
 				return
 			}
 
@@ -674,18 +674,87 @@ func executeScript(c *gin.Context) {
 
 		if len(envVars) > 0 {
 			envPrefix = strings.Join(envVars, " ") + " "
-			log.Printf("Prepared environment variables for script '%s': %s. TrackingID: %s", selectedDefinition.Name, strings.TrimSpace(envPrefix), request.TrackingID)
+			log.Printf("Prepared environment variables for script '%s': %s. TrackingID: %s", selectedDefinition.Name, strings.TrimSpace(envPrefix), bodyTrackingID)
 		}
 	}
 
 	// Construct the command
-	fullCommand := envPrefix + selectedDefinition.Command
+	// Look for ${VAR_NAME} patterns in the command and perform replacement
+	commandWithVarsExpanded := selectedDefinition.Command
+
+	// Extract all ${VAR_NAME} patterns from the command
+	varPattern := regexp.MustCompile(`\${([A-Za-z0-9_]+)}`)
+	matches := varPattern.FindAllStringSubmatch(commandWithVarsExpanded, -1)
+
+	// Create a map of environment variables for easy lookup by scanning parameters
+	envVarMap := make(map[string]string)
+
+	// Add parameters from all possible sources
+	// First try parameters directly in taskData
+	for k, v := range request.TaskData {
+		if k != "name" && k != "parameters" {
+			envVarMap[sanitizeEnvVarName(k)] = fmt.Sprintf("%v", v)
+		}
+	}
+
+	// Then try parameters from the parameters array if it exists
+	if parametersInterface, hasParams := request.TaskData["parameters"]; hasParams {
+		if paramsArray, isArray := parametersInterface.([]interface{}); isArray {
+			for _, paramItem := range paramsArray {
+				if paramObj, isObj := paramItem.(map[string]interface{}); isObj {
+					if name, hasName := paramObj["name"].(string); hasName {
+						if value, hasValue := paramObj["value"]; hasValue {
+							envVarMap[sanitizeEnvVarName(name)] = fmt.Sprintf("%v", value)
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Log the environment variable map for debugging
+	envVarMapJSON, _ := json.Marshal(envVarMap)
+	log.Printf("Environment variable map for substitution: %s. TrackingID: %s", string(envVarMapJSON), bodyTrackingID)
+
+	// Pre-process the command to replace ${VAR_NAME} with actual values before it's executed
+	for _, match := range matches {
+		if len(match) >= 2 {
+			varName := match[1]                             // This is the name inside ${...}
+			varPattern := "${" + varName + "}"              // Full pattern like ${INTERFACE_NAME}
+			sanitizedVarName := sanitizeEnvVarName(varName) // Sanitized version for lookup
+
+			// Try to find the variable in our environment map
+			if value, exists := envVarMap[sanitizedVarName]; exists {
+				commandWithVarsExpanded = strings.ReplaceAll(commandWithVarsExpanded, varPattern, value)
+				log.Printf("Replaced variable %s with value %s in command. TrackingID: %s", varPattern, value, bodyTrackingID)
+			} else {
+				// Try case-insensitive match
+				foundCaseInsensitive := false
+				for envName, envValue := range envVarMap {
+					if strings.EqualFold(envName, sanitizedVarName) {
+						commandWithVarsExpanded = strings.ReplaceAll(commandWithVarsExpanded, varPattern, envValue)
+						log.Printf("Replaced variable %s with case-insensitive match %s=%s in command. TrackingID: %s",
+							varPattern, envName, envValue, bodyTrackingID)
+						foundCaseInsensitive = true
+						break
+					}
+				}
+
+				if !foundCaseInsensitive {
+					log.Printf("WARNING: Variable %s used in command but not found in parameters. TrackingID: %s", varPattern, bodyTrackingID)
+				}
+			}
+		}
+	}
+
+	// Construct the final command with environment variables and expanded placeholders
+	fullCommand := envPrefix + commandWithVarsExpanded
 	execCmd := fmt.Sprintf("kubectl exec -n %s %s -- /bin/bash -c '%s'",
 		config.Namespace,
 		targetPod,
 		fullCommand,
 	)
-	log.Printf("Constructed kubectl command for script '%s': %s. TrackingID: %s", selectedDefinition.Name, execCmd, request.TrackingID)
+	log.Printf("Constructed kubectl command for script '%s': %s. TrackingID: %s", selectedDefinition.Name, execCmd, bodyTrackingID)
 
 	// Execute command
 	cmd := exec.Command("sh", "-c", execCmd)
