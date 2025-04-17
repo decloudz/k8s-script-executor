@@ -17,6 +17,26 @@ data:
         "acceptedParameters": []
       },
       {
+        "id": "update-server",
+        "name": "Update Server",
+        "description": "Updates the server with the latest version of the Prime Cloud Server.",
+        "label": "Update Server",
+        "type": "string",
+        "optional": true,
+        "command": ". system/bin/acenv.sh && usti_c",
+        "acceptedParameters": []
+      },
+      {
+        "id": "query-server",
+        "name": "Query Server",
+        "description": "Queries the server for the latest version of the Prime Cloud Server.",
+        "label": "Query Server",
+        "type": "string",
+        "optional": true,
+        "command": ". system/bin/acenv.sh && qsti_c",
+        "acceptedParameters": []
+      },
+      {
         "id": "list-home",
         "name": "list home directory",
         "description": "Lists the contents of the /home directory.",
