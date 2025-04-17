@@ -511,35 +511,91 @@ func executeScript(c *gin.Context) {
 		var envVars []string
 		log.Printf("Processing %d parameters for script '%s'. TrackingID: %s", len(selectedDefinition.Parameters), selectedDefinition.Name, request.TrackingID)
 
-		// Log all available taskData keys to help debugging
-		var taskDataKeys []string
-		for k := range request.TaskData {
-			taskDataKeys = append(taskDataKeys, k)
-		}
-		log.Printf("Available taskData keys for script '%s': %v. TrackingID: %s",
-			selectedDefinition.Name, taskDataKeys, bodyTrackingID)
-
-		// Dump raw taskData values
+		// Dump entire taskData for debugging
 		taskDataJSON, _ := json.MarshalIndent(request.TaskData, "", "  ")
 		log.Printf("DEBUG - Raw taskData contents: %s", string(taskDataJSON))
 
-		// Create a case-insensitive version of taskData for flexible matching
-		caseInsensitiveTaskData := make(map[string]interface{})
+		// Create a normalized parameters map that merges all possible parameter sources
+		// This helps us handle different parameter passing conventions
+		normalizedParams := make(map[string]interface{})
+
+		// 1. First add all direct taskData keys (except 'name' and 'parameters' which are special)
 		for k, v := range request.TaskData {
-			caseInsensitiveTaskData[strings.ToUpper(k)] = v
+			// Skip special keys that aren't actual parameters
+			if k != "name" && k != "parameters" {
+				normalizedParams[k] = v
+				log.Printf("Added direct parameter from taskData: '%s'. TrackingID: %s", k, bodyTrackingID)
+			}
 		}
 
+		// 2. Check for parameters in a dedicated 'parameters' array/object
+		if parametersInterface, hasParams := request.TaskData["parameters"]; hasParams {
+			log.Printf("Found 'parameters' field in taskData (type: %T). TrackingID: %s",
+				parametersInterface, bodyTrackingID)
+
+			// Handle parameters as array of {name,value} objects
+			if paramsArray, isArray := parametersInterface.([]interface{}); isArray {
+				log.Printf("Processing parameters array with %d items. TrackingID: %s",
+					len(paramsArray), bodyTrackingID)
+
+				for i, paramItem := range paramsArray {
+					if paramObj, isObj := paramItem.(map[string]interface{}); isObj {
+						// Look for name/value pattern
+						if name, hasName := paramObj["name"].(string); hasName {
+							if value, hasValue := paramObj["value"]; hasValue {
+								normalizedParams[name] = value
+								log.Printf("Added parameter from array item %d: '%s'='%v'. TrackingID: %s",
+									i, name, value, bodyTrackingID)
+							}
+						} else {
+							// If no name/value pattern, treat the whole object as parameters
+							for k, v := range paramObj {
+								normalizedParams[k] = v
+								log.Printf("Added parameter from array item %d property: '%s'='%v'. TrackingID: %s",
+									i, k, v, bodyTrackingID)
+							}
+						}
+					} else if paramName, isString := paramItem.(string); isString {
+						// Handle case where parameters is just an array of strings (names without values)
+						normalizedParams[paramName] = ""
+						log.Printf("Added parameter name from array item %d: '%s' (no value). TrackingID: %s",
+							i, paramName, bodyTrackingID)
+					}
+				}
+			} else if paramsObj, isObj := parametersInterface.(map[string]interface{}); isObj {
+				// Handle parameters as a simple object of key/value pairs
+				for k, v := range paramsObj {
+					normalizedParams[k] = v
+					log.Printf("Added parameter from parameters object: '%s'='%v'. TrackingID: %s",
+						k, v, bodyTrackingID)
+				}
+			}
+		}
+
+		// Log the available parameter names after normalization
+		var availableParamNames []string
+		for k := range normalizedParams {
+			availableParamNames = append(availableParamNames, k)
+		}
+		log.Printf("Available normalized parameters for script '%s': %v. TrackingID: %s",
+			selectedDefinition.Name, availableParamNames, bodyTrackingID)
+
+		// Now process each expected parameter against our normalized map
 		for _, paramDef := range selectedDefinition.Parameters {
-			log.Printf("Looking for parameter '%s' (optional: %v) in taskData. TrackingID: %s",
+			log.Printf("Looking for parameter '%s' (optional: %v). TrackingID: %s",
 				paramDef.Name, paramDef.Optional, bodyTrackingID)
 
 			// First try exact match
-			paramValueInterface, valueOk := request.TaskData[paramDef.Name]
+			paramValueInterface, valueOk := normalizedParams[paramDef.Name]
+			if valueOk {
+				log.Printf("Found parameter '%s' with exact match. TrackingID: %s",
+					paramDef.Name, bodyTrackingID)
+			}
 
-			// If not found, try case-insensitive match
+			// Then try case-insensitive match as fallback
 			if !valueOk {
 				upperParamName := strings.ToUpper(paramDef.Name)
-				for k, v := range request.TaskData {
+				for k, v := range normalizedParams {
 					if strings.ToUpper(k) == upperParamName {
 						paramValueInterface = v
 						valueOk = true
@@ -553,27 +609,29 @@ func executeScript(c *gin.Context) {
 			if !valueOk {
 				// Handle missing parameter value - check if it was optional in definition
 				if !paramDef.Optional {
-					log.Printf("Execute request failed for script '%s': Required parameter '%s' missing in taskData. TrackingID: %s",
+					log.Printf("Execute request failed for script '%s': Required parameter '%s' missing. TrackingID: %s",
 						selectedDefinition.Name, paramDef.Name, bodyTrackingID)
-					log.Printf("DEBUG - Expected parameter: '%s', Available keys: %v", paramDef.Name, taskDataKeys)
+					log.Printf("DEBUG - Expected parameter: '%s', Available normalized parameters: %v",
+						paramDef.Name, availableParamNames)
 
 					// Send FAILED status UPDATE using the OBTAINED numeric ID if process tracking is enabled
-					failureMsg := fmt.Sprintf("Required parameter '%s' missing. Available keys: %v",
-						paramDef.Name, taskDataKeys)
+					failureMsg := fmt.Sprintf("Required parameter '%s' missing. Available parameters: %v",
+						paramDef.Name, availableParamNames)
 
 					if numericProcessID > 0 {
 						notifyProcessTrackingUpdate(config, numericProcessID, ProcessTrackingUpdatePayload{
 							Status:  "FAILED",
 							Message: failureMsg,
 						})
-						// Set Header (using OBTAINED numericProcessID)
+						// Set Header
 						c.Header("X-ProcessId", strconv.FormatInt(numericProcessID, 10))
 					}
 					c.JSON(http.StatusBadRequest, gin.H{"error": failureMsg})
 					return
 				} else {
 					// Optional parameter is missing, skip setting env var for it
-					log.Printf("Optional parameter '%s' for script '%s' missing in taskData, skipping. TrackingID: %s", paramDef.Name, selectedDefinition.Name, bodyTrackingID)
+					log.Printf("Optional parameter '%s' for script '%s' missing, skipping. TrackingID: %s",
+						paramDef.Name, selectedDefinition.Name, bodyTrackingID)
 					continue
 				}
 			}
