@@ -592,14 +592,28 @@ func executeScript(c *gin.Context) {
 					paramDef.Name, bodyTrackingID)
 			}
 
-			// Then try case-insensitive match as fallback
+			// Then try case-insensitive match and handle spaces/underscores
 			if !valueOk {
-				upperParamName := strings.ToUpper(paramDef.Name)
+				// Normalize both the parameter name and keys for comparison
+				// Convert to uppercase and replace spaces with underscores or vice versa
+				normalizedParamName := strings.ToUpper(paramDef.Name)
+				normalizedParamNameWithSpaces := strings.ReplaceAll(normalizedParamName, "_", " ")
+				normalizedParamNameWithUnderscores := strings.ReplaceAll(normalizedParamName, " ", "_")
+
 				for k, v := range normalizedParams {
-					if strings.ToUpper(k) == upperParamName {
+					normalizedKey := strings.ToUpper(k)
+					normalizedKeyWithSpaces := strings.ReplaceAll(normalizedKey, "_", " ")
+					normalizedKeyWithUnderscores := strings.ReplaceAll(normalizedKey, " ", "_")
+
+					// Check for match with various normalized forms
+					if normalizedKey == normalizedParamName ||
+						normalizedKey == normalizedParamNameWithSpaces ||
+						normalizedKey == normalizedParamNameWithUnderscores ||
+						normalizedKeyWithSpaces == normalizedParamName ||
+						normalizedKeyWithUnderscores == normalizedParamName {
 						paramValueInterface = v
 						valueOk = true
-						log.Printf("Found parameter '%s' with case-insensitive match on key '%s'. TrackingID: %s",
+						log.Printf("Found parameter '%s' with fuzzy match on key '%s'. TrackingID: %s",
 							paramDef.Name, k, bodyTrackingID)
 						break
 					}
